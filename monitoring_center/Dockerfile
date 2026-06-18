@@ -1,4 +1,4 @@
-ARG BUILD_FROM=ghcr.io/home-assistant/base:latest
+ARG BUILD_FROM=ghcr.io/home-assistant/base-python:3.13-alpine3.24
 FROM ${BUILD_FROM}
 
 ARG BUILD_VERSION=0.3.0
@@ -11,17 +11,21 @@ LABEL \
   io.hass.type="app" \
   io.hass.arch="${BUILD_ARCH}"
 
-RUN apk add --no-cache \
-    bash \
-    iputils \
-    python3 \
-    py3-pip \
-    tzdata
+RUN retries=0; \
+    until apk add --no-cache \
+        iputils \
+        tzdata; do \
+      retries=$((retries + 1)); \
+      if [ "${retries}" -ge 5 ]; then \
+        exit 1; \
+      fi; \
+      sleep $((retries * 5)); \
+    done
 
 WORKDIR /app
 
 COPY requirements.txt /app/
-RUN python3 -m venv /opt/monitoring-center \
+RUN python -m venv /opt/monitoring-center \
   && /opt/monitoring-center/bin/pip install --no-cache-dir --upgrade pip \
   && /opt/monitoring-center/bin/pip install --no-cache-dir -r /app/requirements.txt
 
