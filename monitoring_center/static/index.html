@@ -17,7 +17,7 @@
 
     <nav class="tabs" aria-label="Sekcje">
       <button class="tab active" data-tab="dashboard">Dashboard</button>
-      <button class="tab" data-tab="devices">Urządzenia</button>
+      <button class="tab" data-tab="devices">Monitory</button>
       <button class="tab" data-tab="websites">Strony WWW</button>
       <button class="tab" data-tab="history">Historia</button>
       <button class="tab" data-tab="settings">Ustawienia</button>
@@ -51,16 +51,20 @@
 
       <section id="devices" class="view">
         <div class="section-head">
-          <h2>Urządzenia</h2>
-          <button data-open-form="device" class="primary">Dodaj urządzenie</button>
+          <h2>Monitory</h2>
+          <button data-open-form="ping_host" class="primary">Dodaj monitor</button>
         </div>
+        <section class="panel filters">
+          <label>Preset<select id="presetSelect"><option value="">Wybierz preset</option></select></label>
+          <button id="applyPresetBtn">Skopiuj preset</button>
+        </section>
         <div id="deviceList" class="cards"></div>
       </section>
 
       <section id="websites" class="view">
         <div class="section-head">
           <h2>Strony WWW</h2>
-          <button data-open-form="website" class="primary">Dodaj stronę</button>
+          <button data-open-form="http_hash" class="primary">Dodaj stronę</button>
         </div>
         <div id="websiteList" class="cards"></div>
       </section>
@@ -68,7 +72,7 @@
       <section id="history" class="view">
         <section class="panel filters">
           <label>Monitor<select id="historyMonitor"><option value="">Wszystkie</option></select></label>
-          <label>Typ<select id="historyType"><option value="">Wszystkie</option><option value="device">Urządzenia</option><option value="website">WWW</option></select></label>
+          <label>Typ<select id="historyType"><option value="">Wszystkie</option></select></label>
           <label>Status<input id="historyStatus" placeholder="online, offline, ok, error" /></label>
           <label>Od<input id="historyFrom" type="datetime-local" /></label>
           <label>Do<input id="historyTo" type="datetime-local" /></label>
@@ -139,16 +143,45 @@
     <dialog id="monitorDialog">
       <form id="monitorForm" method="dialog">
         <input type="hidden" name="id" />
-        <input type="hidden" name="type" />
         <h2 id="dialogTitle">Monitor</h2>
+        <label>Typ monitora<select name="type" id="monitorTypeSelect"></select></label>
         <label>Nazwa<input name="name" required maxlength="120" /></label>
         <label id="targetLabel">Cel<input name="target" required /></label>
         <label>Interwał s<input name="interval_seconds" type="number" min="5" max="86400" /></label>
         <label class="check"><input name="enabled" type="checkbox" checked /> Aktywny</label>
-        <div id="websiteOptions" class="nested">
+        <div id="tcpOptions" class="nested type-options">
+          <label>Host/IP<input name="tcp_host" placeholder="192.168.1.10" /></label>
+          <label>Port<input name="tcp_port" type="number" min="1" max="65535" placeholder="22" /></label>
+        </div>
+        <div id="httpOptions" class="nested type-options">
+          <label>Oczekiwane kody HTTP<input name="expected_status_codes" placeholder="200,204,301" /></label>
+        </div>
+        <div id="websiteOptions" class="nested type-options">
           <label>Selektor CSS<input name="css_selector" placeholder="np. main article" /></label>
           <label>Ignorowane regexy<textarea name="ignore_patterns" rows="4" placeholder="Jedna reguła na linię"></textarea></label>
           <label>Limit strony KB<input name="max_page_size_kb" type="number" min="16" max="10240" /></label>
+        </div>
+        <div id="dnsOptions" class="nested type-options">
+          <label>Typ rekordu<select name="record_type"><option>A</option><option>AAAA</option><option>CNAME</option><option>MX</option><option>TXT</option></select></label>
+        </div>
+        <div id="sslOptions" class="nested type-options">
+          <label>Host<input name="ssl_host" placeholder="example.com" /></label>
+          <label>Port<input name="ssl_port" type="number" min="1" max="65535" placeholder="443" /></label>
+          <label>Próg warning dni<input name="warning_days" type="number" min="1" max="3650" placeholder="30" /></label>
+          <label>Próg error dni<input name="error_days" type="number" min="0" max="3650" placeholder="7" /></label>
+        </div>
+        <div id="restOptions" class="nested type-options">
+          <label>Ścieżka JSON<input name="json_path" placeholder="status.online" /></label>
+          <label>Oczekiwana wartość<input name="expected_value" placeholder="true" /></label>
+        </div>
+        <div id="haEntityOptions" class="nested type-options">
+          <label>Stany alarmowe<input name="alert_states" placeholder="unavailable,unknown,off" /></label>
+        </div>
+        <div id="mqttOptions" class="nested type-options">
+          <label>Host/IP brokera<input name="mqtt_host" placeholder="192.168.1.60" /></label>
+          <label>Port MQTT<input name="mqtt_port" type="number" min="1" max="65535" placeholder="1883" /></label>
+          <label>Topic<input name="topic" placeholder="home/status" /></label>
+          <label>Timeout topicu s<input name="topic_timeout_seconds" type="number" min="1" max="3600" /></label>
         </div>
         <label>Timeout s<input name="timeout_seconds" type="number" min="1" max="120" /></label>
         <label class="check"><input name="test_on_save" type="checkbox" checked /> Testuj przy zapisie</label>

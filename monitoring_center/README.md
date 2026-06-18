@@ -5,6 +5,8 @@ Monitoring Center to lokalny dodatek Home Assistant do monitorowania urządzeń 
 ## Funkcje
 
 - monitorowanie urządzeń po IP albo hostname przez cykliczny ping,
+- predefiniowane typy monitorów i presety w UI,
+- monitoring portów TCP, DNS, SSL, REST API, encji Home Assistant i MQTT,
 - status online/offline, czas odpowiedzi, utrata pakietów i historia dostępności,
 - monitorowanie URL przez HTTP/HTTPS, kod HTTP, czas odpowiedzi i hash treści,
 - wykrywanie zmian HTML, selektor CSS, ignorowane regexy dla dynamicznych fragmentów,
@@ -13,6 +15,7 @@ Monitoring Center to lokalny dodatek Home Assistant do monitorowania urządzeń 
 - dashboard, zakładki Urządzenia, Strony WWW, Historia, Ustawienia i Diagnostyka,
 - publikowanie encji `binary_sensor` oraz `sensor` do Home Assistant,
 - eventy `monitor_online`, `monitor_offline`, `website_changed`, `website_error`,
+- eventy typów monitorów, np. `website_hash_changed`, `ssl_certificate_expiring`, `dns_record_changed`,
 - import i export konfiguracji monitorów do JSON.
 
 ## Encje Home Assistant
@@ -71,12 +74,150 @@ Najważniejsze opcje:
 
 Przykłady automatyzacji znajdują się w `examples/automations.yaml`.
 
+## Przykłady Typów Monitorów
+
+Ping hosta:
+
+```json
+{
+  "type": "ping_host",
+  "name": "Router",
+  "target": "192.168.1.1",
+  "interval_seconds": 60,
+  "config": {
+    "timeout_seconds": 3
+  }
+}
+```
+
+Port TCP:
+
+```json
+{
+  "type": "tcp_port",
+  "name": "Home Assistant 8123",
+  "target": "192.168.1.40:8123",
+  "interval_seconds": 60,
+  "config": {
+    "host": "192.168.1.40",
+    "port": 8123,
+    "timeout_seconds": 5
+  }
+}
+```
+
+Hash strony WWW:
+
+```json
+{
+  "type": "http_hash",
+  "name": "Strona WWW",
+  "target": "https://example.com",
+  "interval_seconds": 300,
+  "config": {
+    "expected_status_codes": [200],
+    "css_selector": "main",
+    "ignore_patterns": ["\\\\d{4}-\\\\d{2}-\\\\d{2}"],
+    "max_page_size_kb": 512,
+    "timeout_seconds": 10
+  }
+}
+```
+
+Certyfikat SSL:
+
+```json
+{
+  "type": "ssl_certificate",
+  "name": "SSL example.com",
+  "target": "example.com:443",
+  "interval_seconds": 21600,
+  "config": {
+    "host": "example.com",
+    "port": 443,
+    "warning_days": 30,
+    "error_days": 7,
+    "timeout_seconds": 5
+  }
+}
+```
+
+Encja Home Assistant:
+
+```json
+{
+  "type": "ha_entity",
+  "name": "Czujnik salon",
+  "target": "sensor.salon_temperature",
+  "interval_seconds": 60,
+  "config": {
+    "alert_states": ["unavailable", "unknown", "off"],
+    "timeout_seconds": 5
+  }
+}
+```
+
+## Przykłady Automatyzacji
+
+Zmiana hasha strony:
+
+```yaml
+alias: Monitoring Center - hash strony zmieniony
+trigger:
+  - platform: event
+    event_type: website_hash_changed
+action:
+  - service: persistent_notification.create
+    data:
+      title: "Zmiana strony"
+      message: >
+        {{ trigger.event.data.monitor_name }} zmieniła hash.
+        Poprzedni: {{ trigger.event.data.details.previous_hash }},
+        aktualny: {{ trigger.event.data.details.current_hash }}.
+```
+
+Wygasający certyfikat SSL:
+
+```yaml
+alias: Monitoring Center - SSL wygasa
+trigger:
+  - platform: event
+    event_type: ssl_certificate_expiring
+action:
+  - service: persistent_notification.create
+    data:
+      title: "Certyfikat SSL wygasa"
+      message: >
+        {{ trigger.event.data.monitor_name }} wygasa za
+        {{ trigger.event.data.details.days_left }} dni.
+```
+
+Niedostępna encja Home Assistant:
+
+```yaml
+alias: Monitoring Center - encja niedostępna
+trigger:
+  - platform: event
+    event_type: ha_entity_state_changed
+condition:
+  - condition: template
+    value_template: "{{ trigger.event.data.details.state in ['unavailable', 'unknown', 'off'] }}"
+action:
+  - service: persistent_notification.create
+    data:
+      title: "Encja HA w stanie alarmowym"
+      message: >
+        {{ trigger.event.data.monitor_name }} ma stan
+        {{ trigger.event.data.details.state }}.
+```
+
 ## Rozwój
 
 Kod jest podzielony modułowo:
 
 - `monitoring_center/main.py` - API i serwowanie UI,
-- `monitoring_center/monitoring.py` - scheduler oraz logika ping/HTTP,
+- `monitoring_center/monitoring.py` - scheduler, zapis historii i eventy,
+- `monitoring_center/monitor_types/` - pluginy typów monitoringu,
 - `monitoring_center/database.py` - dostęp do SQLite,
 - `monitoring_center/migrations.py` - migracje schematu,
 - `monitoring_center/ha.py` - publikacja encji i eventów HA,

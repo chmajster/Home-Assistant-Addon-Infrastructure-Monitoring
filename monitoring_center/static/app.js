@@ -1,5 +1,7 @@
 const state = {
   monitors: [],
+  monitorTypes: [],
+  presets: [],
   summary: null,
   settings: null,
 };
@@ -35,6 +37,8 @@ function bindNavigation() {
 
 function bindForms() {
   $("#monitorForm").addEventListener("submit", saveMonitor);
+  $("#monitorTypeSelect").addEventListener("change", () => renderTypeFields($("#monitorTypeSelect").value));
+  $("#applyPresetBtn").addEventListener("click", applyPreset);
   $("#settingsForm").addEventListener("submit", saveSettings);
   $("#historyApply").addEventListener("click", loadHistory);
   $("#historyClean").addEventListener("click", async () => {
@@ -47,15 +51,21 @@ function bindForms() {
 }
 
 async function refreshAll() {
-  const [summary, monitors, settings] = await Promise.all([
+  const [summary, monitors, settings, monitorTypes, presets] = await Promise.all([
     api("/api/summary"),
     api("/api/monitors"),
     api("/api/settings"),
+    api("/api/monitor-types"),
+    api("/api/presets"),
   ]);
   state.summary = summary;
   state.monitors = monitors;
   state.settings = settings;
+  state.monitorTypes = monitorTypes;
+  state.presets = presets;
   renderDashboard();
+  renderMonitorTypeOptions();
+  renderPresetOptions();
   renderMonitorLists();
   renderHistoryMonitorOptions();
   renderSettings();
@@ -98,7 +108,7 @@ function renderAvailabilityChart() {
     return;
   }
   root.innerHTML = state.monitors.map((monitor) => {
-    const down = ["offline", "error"].includes(monitor.status) ? "100%" : "0%";
+    const down = isSuccessStatus(monitor.status) ? "0%" : "100%";
     return `<div class="bar" style="--down:${down}" title="${escapeHtml(monitor.name)}">
       <strong>${escapeHtml(monitor.name)}</strong><br>${escapeHtml(monitor.status)}
     </div>`;
@@ -106,8 +116,99 @@ function renderAvailabilityChart() {
 }
 
 function renderMonitorLists() {
-  renderCards("#deviceList", state.monitors.filter((m) => m.type === "device"));
-  renderCards("#websiteList", state.monitors.filter((m) => m.type === "website"));
+  renderCards("#deviceList", state.monitors.filter((m) => !["http_status", "http_hash", "ssl_certificate", "rest_api"].includes(m.type)));
+  renderCards("#websiteList", state.monitors.filter((m) => ["http_status", "http_hash", "ssl_certificate", "rest_api"].includes(m.type)));
+}
+
+function renderMonitorTypeOptions() {
+  const options = state.monitorTypes
+    .map((type) => `<option value="${type.type}">${escapeHtml(type.label)}</option>`)
+    .join("");
+  const current = $("#monitorTypeSelect").value;
+  $("#monitorTypeSelect").innerHTML = options;
+  if (current) $("#monitorTypeSelect").value = current;
+  const historyCurrent = $("#historyType").value;
+  $("#historyType").innerHTML = '<option value="">Wszystkie</option>' + options;
+  $("#historyType").value = historyCurrent;
+}
+
+function renderPresetOptions() {
+  $("#presetSelect").innerHTML = '<option value="">Wybierz preset</option>' + state.presets
+    .map((preset, index) => `<option value="${index}">${escapeHtml(preset.name)}</option>`)
+    .join("");
+}
+
+function applyPreset() {
+  const index = $("#presetSelect").value;
+  if (index === "") {
+    toast("Wybierz preset.");
+    return;
+  }
+  const preset = JSON.parse(JSON.stringify(state.presets[Number(index)]));
+  openMonitorForm({ ...preset, enabled: true });
+}
+
+function renderTypeFields(type) {
+  $$(".type-options").forEach((node) => node.classList.add("hidden"));
+  const targetLabels = {
+    ping_host: "IP lub hostname",
+    tcp_port: "Host:port",
+    http_status: "Adres URL",
+    http_hash: "Adres URL",
+    dns_lookup: "Domena",
+    ssl_certificate: "Host lub host:port",
+    rest_api: "Endpoint REST API",
+    ha_entity: "Entity ID",
+    mqtt_monitor: "Broker host:port",
+  };
+  $("#targetLabel").firstChild.textContent = targetLabels[type] || "Cel";
+  if (type === "tcp_port") $("#tcpOptions").classList.remove("hidden");
+  if (["http_status", "http_hash", "rest_api"].includes(type)) $("#httpOptions").classList.remove("hidden");
+  if (type === "http_hash") $("#websiteOptions").classList.remove("hidden");
+  if (type === "dns_lookup") $("#dnsOptions").classList.remove("hidden");
+  if (type === "ssl_certificate") $("#sslOptions").classList.remove("hidden");
+  if (type === "rest_api") $("#restOptions").classList.remove("hidden");
+  if (type === "ha_entity") $("#haEntityOptions").classList.remove("hidden");
+  if (type === "mqtt_monitor") $("#mqttOptions").classList.remove("hidden");
+}
+
+function buildMonitorConfig(form, type) {
+  const config = {};
+  if (["http_status", "http_hash", "rest_api"].includes(type) && form.elements.expected_status_codes.value.trim()) {
+    config.expected_status_codes = form.elements.expected_status_codes.value.split(",").map((item) => Number(item.trim())).filter(Boolean);
+  }
+  if (type === "tcp_port") {
+    if (form.elements.tcp_host.value.trim()) config.host = form.elements.tcp_host.value.trim();
+    if (form.elements.tcp_port.value) config.port = Number(form.elements.tcp_port.value);
+  }
+  if (type === "http_hash") {
+    if (form.elements.css_selector.value.trim()) config.css_selector = form.elements.css_selector.value.trim();
+    if (form.elements.max_page_size_kb.value) config.max_page_size_kb = Number(form.elements.max_page_size_kb.value);
+    config.ignore_patterns = form.elements.ignore_patterns.value.split("\n").map((line) => line.trim()).filter(Boolean);
+  }
+  if (type === "dns_lookup") {
+    config.record_type = form.elements.record_type.value;
+  }
+  if (type === "ssl_certificate") {
+    if (form.elements.ssl_host.value.trim()) config.host = form.elements.ssl_host.value.trim();
+    if (form.elements.ssl_port.value) config.port = Number(form.elements.ssl_port.value);
+    if (form.elements.warning_days.value) config.warning_days = Number(form.elements.warning_days.value);
+    if (form.elements.error_days.value) config.error_days = Number(form.elements.error_days.value);
+  }
+  if (type === "rest_api") {
+    if (form.elements.json_path.value.trim()) config.json_path = form.elements.json_path.value.trim();
+    if (form.elements.expected_value.value.trim()) config.expected_value = form.elements.expected_value.value.trim();
+  }
+  if (type === "ha_entity") {
+    config.alert_states = form.elements.alert_states.value.split(",").map((item) => item.trim()).filter(Boolean);
+  }
+  if (type === "mqtt_monitor") {
+    if (form.elements.mqtt_host.value.trim()) config.host = form.elements.mqtt_host.value.trim();
+    if (form.elements.mqtt_port.value) config.port = Number(form.elements.mqtt_port.value);
+    if (form.elements.topic.value.trim()) config.topic = form.elements.topic.value.trim();
+    if (form.elements.topic_timeout_seconds.value) config.topic_timeout_seconds = Number(form.elements.topic_timeout_seconds.value);
+  }
+  return config;
 }
 
 function renderCards(selector, monitors) {
@@ -127,6 +228,7 @@ function renderCards(selector, monitors) {
       </div>
       <div class="meta">
         <span>Interwał: ${monitor.interval_seconds}s</span>
+        <span>Typ: ${escapeHtml(typeLabel(monitor.type))}</span>
         <span>Odpowiedź: ${monitor.last_response_ms ? Number(monitor.last_response_ms).toFixed(1) + " ms" : "-"}</span>
         <span>HTTP: ${monitor.last_http_status || "-"}</span>
         <span>Ostatni test: ${formatDate(monitor.last_checked_at)}</span>
@@ -135,7 +237,7 @@ function renderCards(selector, monitors) {
       <div class="actions">
         <button data-action="check" data-id="${monitor.id}">Test</button>
         <button data-action="edit" data-id="${monitor.id}">Edytuj</button>
-        ${monitor.type === "website" ? `<button data-action="snapshots" data-id="${monitor.id}">Zmiany</button>` : ""}
+        ${monitor.type === "http_hash" ? `<button data-action="snapshots" data-id="${monitor.id}">Zmiany</button>` : ""}
         <button data-action="delete" data-id="${monitor.id}">Usuń</button>
       </div>
     </article>
@@ -165,19 +267,33 @@ function openMonitorForm(monitor) {
   const form = $("#monitorForm");
   form.reset();
   form.elements.id.value = monitor.id || "";
-  form.elements.type.value = monitor.type;
+  form.elements.type.value = monitor.type || "ping_host";
   form.elements.name.value = monitor.name || "";
   form.elements.target.value = monitor.target || "";
   form.elements.interval_seconds.value = monitor.interval_seconds || "";
   form.elements.enabled.checked = monitor.enabled !== false;
   form.elements.test_on_save.checked = !monitor.id;
   form.elements.timeout_seconds.value = monitor.config?.timeout_seconds || "";
+  form.elements.expected_status_codes.value = (monitor.config?.expected_status_codes || []).join(",");
+  form.elements.tcp_host.value = monitor.config?.host || "";
+  form.elements.tcp_port.value = monitor.config?.port || "";
   form.elements.css_selector.value = monitor.config?.css_selector || "";
   form.elements.ignore_patterns.value = (monitor.config?.ignore_patterns || []).join("\n");
   form.elements.max_page_size_kb.value = monitor.config?.max_page_size_kb || "";
-  $("#dialogTitle").textContent = monitor.id ? "Edytuj monitor" : (monitor.type === "device" ? "Dodaj urządzenie" : "Dodaj stronę WWW");
-  $("#targetLabel").firstChild.textContent = monitor.type === "device" ? "IP lub hostname" : "Adres URL";
-  $("#websiteOptions").classList.toggle("hidden", monitor.type !== "website");
+  form.elements.record_type.value = monitor.config?.record_type || "A";
+  form.elements.ssl_host.value = monitor.config?.host || "";
+  form.elements.ssl_port.value = monitor.config?.port || "";
+  form.elements.warning_days.value = monitor.config?.warning_days || "";
+  form.elements.error_days.value = monitor.config?.error_days || "";
+  form.elements.json_path.value = monitor.config?.json_path || "";
+  form.elements.expected_value.value = monitor.config?.expected_value ?? "";
+  form.elements.alert_states.value = (monitor.config?.alert_states || []).join(",");
+  form.elements.mqtt_host.value = monitor.config?.host || "";
+  form.elements.mqtt_port.value = monitor.config?.port || "";
+  form.elements.topic.value = monitor.config?.topic || "";
+  form.elements.topic_timeout_seconds.value = monitor.config?.topic_timeout_seconds || "";
+  $("#dialogTitle").textContent = monitor.id ? "Edytuj monitor" : "Dodaj monitor";
+  renderTypeFields(form.elements.type.value);
   $("#monitorDialog").showModal();
 }
 
@@ -186,13 +302,8 @@ async function saveMonitor(event) {
   const form = event.currentTarget;
   const id = form.elements.id.value;
   const type = form.elements.type.value;
-  const config = {};
+  const config = buildMonitorConfig(form, type);
   if (form.elements.timeout_seconds.value) config.timeout_seconds = Number(form.elements.timeout_seconds.value);
-  if (type === "website") {
-    if (form.elements.css_selector.value.trim()) config.css_selector = form.elements.css_selector.value.trim();
-    if (form.elements.max_page_size_kb.value) config.max_page_size_kb = Number(form.elements.max_page_size_kb.value);
-    config.ignore_patterns = form.elements.ignore_patterns.value.split("\n").map((line) => line.trim()).filter(Boolean);
-  }
   const payload = {
     type,
     name: form.elements.name.value.trim(),
@@ -346,9 +457,18 @@ function checkLine(row) {
 }
 
 function badgeClass(status) {
-  if (["online", "ok"].includes(status)) return "ok";
+  if (isSuccessStatus(status)) return "ok";
   if (["offline", "error"].includes(status)) return "bad";
+  if (["closed", "timeout"].includes(status)) return "bad";
   return "unknown";
+}
+
+function typeLabel(type) {
+  return state.monitorTypes.find((item) => item.type === type)?.label || type;
+}
+
+function isSuccessStatus(status) {
+  return ["online", "ok", "open", "warning"].includes(status);
 }
 
 function formatDate(value) {

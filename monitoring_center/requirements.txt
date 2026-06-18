@@ -1,6 +1,8 @@
 beautifulsoup4==4.12.3
+dnspython==2.7.0
 fastapi==0.115.6
 httpx==0.28.1
+paho-mqtt==1.6.1
 pydantic==2.10.4
 python-multipart==0.0.20
 soupsieve==2.6

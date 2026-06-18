@@ -3,7 +3,7 @@ from __future__ import annotations
 from .database import Database
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 def migrate(db: Database) -> None:
@@ -21,6 +21,9 @@ def migrate(db: Database) -> None:
     if version < 1:
         _migration_001(db)
         db.execute("INSERT INTO schema_migrations(version) VALUES (?)", (1,))
+    if version < 2:
+        _migration_002(db)
+        db.execute("INSERT INTO schema_migrations(version) VALUES (?)", (2,))
 
 
 def _migration_001(db: Database) -> None:
@@ -28,7 +31,7 @@ def _migration_001(db: Database) -> None:
         """
         CREATE TABLE IF NOT EXISTS monitors (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            type TEXT NOT NULL CHECK(type IN ('device', 'website')),
+            type TEXT NOT NULL,
             name TEXT NOT NULL,
             target TEXT NOT NULL,
             interval_seconds INTEGER NOT NULL,
@@ -102,5 +105,60 @@ def _migration_001(db: Database) -> None:
         );
 
         CREATE INDEX IF NOT EXISTS idx_events_time ON events(created_at DESC);
+        """
+    )
+
+
+def _migration_002(db: Database) -> None:
+    db.executescript(
+        """
+        PRAGMA foreign_keys=OFF;
+
+        DROP INDEX IF EXISTS idx_monitors_type;
+        DROP INDEX IF EXISTS idx_monitors_enabled;
+
+        CREATE TABLE IF NOT EXISTS monitors_v2 (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            type TEXT NOT NULL,
+            name TEXT NOT NULL,
+            target TEXT NOT NULL,
+            interval_seconds INTEGER NOT NULL,
+            enabled INTEGER NOT NULL DEFAULT 1,
+            config_json TEXT NOT NULL DEFAULT '{}',
+            status TEXT NOT NULL DEFAULT 'unknown',
+            last_response_ms REAL,
+            last_http_status INTEGER,
+            last_error TEXT,
+            last_content_hash TEXT,
+            last_checked_at TEXT,
+            last_changed_at TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        INSERT INTO monitors_v2(
+            id, type, name, target, interval_seconds, enabled, config_json,
+            status, last_response_ms, last_http_status, last_error, last_content_hash,
+            last_checked_at, last_changed_at, created_at, updated_at
+        )
+        SELECT
+            id,
+            CASE type
+                WHEN 'device' THEN 'ping_host'
+                WHEN 'website' THEN 'http_hash'
+                ELSE type
+            END,
+            name, target, interval_seconds, enabled, config_json,
+            status, last_response_ms, last_http_status, last_error, last_content_hash,
+            last_checked_at, last_changed_at, created_at, updated_at
+        FROM monitors;
+
+        DROP TABLE monitors;
+        ALTER TABLE monitors_v2 RENAME TO monitors;
+
+        CREATE INDEX IF NOT EXISTS idx_monitors_type ON monitors(type);
+        CREATE INDEX IF NOT EXISTS idx_monitors_enabled ON monitors(enabled);
+
+        PRAGMA foreign_keys=ON;
         """
     )

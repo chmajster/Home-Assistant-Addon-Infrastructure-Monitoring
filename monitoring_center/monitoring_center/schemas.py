@@ -1,15 +1,12 @@
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any
 
 from pydantic import BaseModel, Field
 
 
-MonitorType = Literal["device", "website"]
-
-
 class MonitorIn(BaseModel):
-    type: MonitorType
+    type: str = Field(min_length=1, max_length=64)
     name: str = Field(min_length=1, max_length=120)
     target: str = Field(min_length=1, max_length=2048)
     interval_seconds: int | None = Field(default=None, ge=5, le=86400)
@@ -19,6 +16,7 @@ class MonitorIn(BaseModel):
 
 
 class MonitorUpdate(BaseModel):
+    type: str | None = Field(default=None, min_length=1, max_length=64)
     name: str | None = Field(default=None, min_length=1, max_length=120)
     target: str | None = Field(default=None, min_length=1, max_length=2048)
     interval_seconds: int | None = Field(default=None, ge=5, le=86400)

@@ -35,7 +35,7 @@ class HomeAssistantClient:
         prefix = slugify(self.config.entity_prefix)
         monitor_slug = slugify(f"{monitor['id']}_{monitor['name']}")
         status = monitor.get("status", "unknown")
-        is_online = status in {"online", "ok"}
+        is_online = status in {"online", "ok", "open", "warning"}
         attrs = {
             "friendly_name": monitor["name"],
             "monitor_type": monitor["type"],
@@ -44,6 +44,7 @@ class HomeAssistantClient:
             "last_error": monitor.get("last_error"),
             "response_ms": monitor.get("last_response_ms"),
         }
+        details = monitor.get("last_details") or {}
 
         await self._set_state(
             f"binary_sensor.{prefix}_{monitor_slug}_status",
@@ -61,12 +62,13 @@ class HomeAssistantClient:
             attrs,
         )
 
-        if monitor["type"] == "website":
+        if monitor["type"] in {"http_status", "http_hash", "rest_api"}:
             await self._set_state(
                 f"sensor.{prefix}_{monitor_slug}_http_status",
                 monitor.get("last_http_status") or "unknown",
                 attrs,
             )
+        if monitor["type"] == "http_hash":
             await self._set_state(
                 f"sensor.{prefix}_{monitor_slug}_last_change",
                 monitor.get("last_changed_at") or "unknown",
@@ -76,6 +78,29 @@ class HomeAssistantClient:
                 f"sensor.{prefix}_{monitor_slug}_change_count",
                 monitor.get("change_count", 0),
                 {**attrs, "state_class": "total_increasing"},
+            )
+            await self._set_state(
+                f"sensor.{prefix}_{monitor_slug}_last_hash",
+                monitor.get("last_content_hash") or "unknown",
+                attrs,
+            )
+        if monitor["type"] == "tcp_port":
+            await self._set_state(
+                f"sensor.{prefix}_{monitor_slug}_tcp_port",
+                details.get("port") or monitor.get("config", {}).get("port") or "unknown",
+                attrs,
+            )
+        if monitor["type"] == "ssl_certificate":
+            await self._set_state(
+                f"sensor.{prefix}_{monitor_slug}_ssl_days_left",
+                details.get("days_left", "unknown"),
+                attrs,
+            )
+        if monitor["type"] == "dns_lookup":
+            await self._set_state(
+                f"sensor.{prefix}_{monitor_slug}_dns_result",
+                ", ".join(details.get("records", [])) if details.get("records") else "unknown",
+                attrs,
             )
 
     async def fire_event(self, event_type: str, payload: dict[str, Any]) -> bool:

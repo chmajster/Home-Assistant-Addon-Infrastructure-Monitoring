@@ -31,7 +31,16 @@ Dodatek może wysyłać eventy do Home Assistant:
 - `monitor_online`,
 - `monitor_offline`,
 - `website_changed`,
-- `website_error`.
+- `website_error`,
+- `monitor_status_changed`,
+- `tcp_port_open`,
+- `tcp_port_closed`,
+- `website_hash_changed`,
+- `ssl_certificate_expiring`,
+- `dns_record_changed`,
+- `rest_api_check_failed`,
+- `ha_entity_state_changed`,
+- `mqtt_monitor_timeout`.
 
 Payload zawiera `monitor_id`, `monitor_name`, `monitor_type`, `target`, `previous_state`, `new_state` i `created_at`.
 
@@ -41,6 +50,8 @@ Panel używa lokalnego API JSON:
 
 - `GET /api/summary`,
 - `GET /api/monitors`,
+- `GET /api/monitor-types`,
+- `GET /api/presets`,
 - `POST /api/monitors`,
 - `PUT /api/monitors/{id}`,
 - `DELETE /api/monitors/{id}`,

@@ -50,3 +50,72 @@
         message: >
           Błąd strony {{ trigger.event.data.monitor_name }}:
           {{ trigger.event.data.new_state }}
+
+- alias: Monitoring Center - ping hosta offline
+  mode: single
+  trigger:
+    - platform: event
+      event_type: monitor_offline
+  condition:
+    - condition: template
+      value_template: "{{ trigger.event.data.monitor_type == 'ping_host' }}"
+  action:
+    - service: persistent_notification.create
+      data:
+        title: "Ping hosta nie odpowiada"
+        message: "{{ trigger.event.data.monitor_name }} jest offline."
+
+- alias: Monitoring Center - port TCP zamknięty
+  mode: queued
+  trigger:
+    - platform: event
+      event_type: tcp_port_closed
+  action:
+    - service: persistent_notification.create
+      data:
+        title: "Port TCP niedostępny"
+        message: >
+          {{ trigger.event.data.monitor_name }}:
+          {{ trigger.event.data.details.host }}:{{ trigger.event.data.details.port }}
+
+- alias: Monitoring Center - hash strony zmieniony
+  mode: queued
+  trigger:
+    - platform: event
+      event_type: website_hash_changed
+  action:
+    - service: persistent_notification.create
+      data:
+        title: "Hash strony zmieniony"
+        message: >
+          {{ trigger.event.data.monitor_name }} zmieniła hash.
+          Aktualny hash: {{ trigger.event.data.details.current_hash }}
+
+- alias: Monitoring Center - certyfikat SSL wygasa
+  mode: queued
+  trigger:
+    - platform: event
+      event_type: ssl_certificate_expiring
+  action:
+    - service: persistent_notification.create
+      data:
+        title: "Certyfikat SSL wygasa"
+        message: >
+          {{ trigger.event.data.monitor_name }}:
+          {{ trigger.event.data.details.days_left }} dni do wygaśnięcia.
+
+- alias: Monitoring Center - encja Home Assistant niedostępna
+  mode: queued
+  trigger:
+    - platform: event
+      event_type: ha_entity_state_changed
+  condition:
+    - condition: template
+      value_template: "{{ trigger.event.data.details.state in ['unavailable', 'unknown', 'off'] }}"
+  action:
+    - service: persistent_notification.create
+      data:
+        title: "Encja Home Assistant w stanie alarmowym"
+        message: >
+          {{ trigger.event.data.monitor_name }} ma stan
+          {{ trigger.event.data.details.state }}.

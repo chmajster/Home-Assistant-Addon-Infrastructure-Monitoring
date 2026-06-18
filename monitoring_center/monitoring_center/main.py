@@ -25,7 +25,7 @@ migrate(db)
 ha = HomeAssistantClient(config)
 service = MonitorService(db, config, ha)
 
-app = FastAPI(title="Monitoring Center", version="0.1.0")
+app = FastAPI(title="Monitoring Center", version="0.2.0")
 static_path = Path(__file__).resolve().parent.parent / "static"
 scheduler_task: asyncio.Task[Any] | None = None
 
@@ -57,6 +57,16 @@ async def summary() -> dict[str, Any]:
 @app.get("/api/monitors")
 async def monitors() -> list[dict[str, Any]]:
     return service.list_monitors()
+
+
+@app.get("/api/monitor-types")
+async def monitor_types() -> list[dict[str, Any]]:
+    return service.get_monitor_types()
+
+
+@app.get("/api/presets")
+async def presets() -> list[dict[str, Any]]:
+    return service.get_presets()
 
 
 @app.post("/api/monitors")

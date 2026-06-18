@@ -4,6 +4,67 @@ Wszystkie istotne zmiany w projekcie **Home Assistant Monitoring / Monitoring Ce
 
 Format opiera się na konwencji Keep a Changelog, a wersjonowanie dodatku powinno podążać za SemVer tam, gdzie ma to zastosowanie.
 
+## [0.2.0] - 2026-06-18
+
+### Added
+
+- Dodano architekturę pluginową typów monitoringu w `monitoring_center/monitor_types`.
+- Dodano endpointy API:
+  - `GET /api/monitor-types`,
+  - `GET /api/presets`.
+- Dodano predefiniowane typy monitoringu:
+  - Ping hosta,
+  - Port TCP,
+  - HTTP/HTTPS status,
+  - HTTP/HTTPS hash zawartości,
+  - DNS lookup,
+  - Certyfikat SSL,
+  - REST API,
+  - Home Assistant entity monitor,
+  - MQTT monitor.
+- Dodano gotowe presety:
+  - Router - ping gateway,
+  - Home Assistant - port 8123,
+  - NAS - ping,
+  - NAS - SMB 445,
+  - SSH server - port 22,
+  - Strona WWW - status i hash,
+  - SSL domeny - certyfikat HTTPS,
+  - DNS domeny - rekord A/AAAA.
+- Dodano dynamiczny formularz dodawania monitora w UI, pokazujący pola zależnie od wybranego typu.
+- Dodano możliwość skopiowania presetu i dostosowania go przed zapisem.
+- Dodano wspólny format szczegółów wyniku w historii:
+  - `monitor_id`,
+  - `monitor_type`,
+  - `status`,
+  - `response_time_ms`,
+  - `checked_at`,
+  - `error_message`,
+  - dane specyficzne dla typu monitora.
+- Dodano eventy Home Assistant:
+  - `monitor_status_changed`,
+  - `tcp_port_open`,
+  - `tcp_port_closed`,
+  - `website_hash_changed`,
+  - `ssl_certificate_expiring`,
+  - `dns_record_changed`,
+  - `rest_api_check_failed`,
+  - `ha_entity_state_changed`,
+  - `mqtt_monitor_timeout`.
+- Dodano sensory zależne od typu monitora:
+  - `sensor.<monitor>_tcp_port`,
+  - `sensor.<monitor>_last_hash`,
+  - `sensor.<monitor>_ssl_days_left`,
+  - `sensor.<monitor>_dns_result`.
+- Dodano zależności `dnspython` i `paho-mqtt`.
+
+### Changed
+
+- Zmieniono schemat `monitors.type`, aby obsługiwał rozszerzalne typy monitorów zamiast starego ograniczenia `device` / `website`.
+- Stare typy są mapowane kompatybilnie:
+  - `device` -> `ping_host`,
+  - `website` -> `http_hash`.
+
 ## [0.1.0] - 2026-06-18
 
 ### Added

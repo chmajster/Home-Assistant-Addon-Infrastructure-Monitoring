@@ -2,41 +2,24 @@ from __future__ import annotations
 
 import asyncio
 import difflib
-import hashlib
 import logging
-import re
 import time
-from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-import httpx
-from bs4 import BeautifulSoup
+from fastapi import HTTPException
 
 from .config import AppConfig
 from .database import Database, dumps_json, loads_json
 from .ha import HomeAssistantClient
-from .validators import ensure_public_url_if_required, validate_device_target, validate_url
+from .monitor_types import PRESETS, get_plugin, list_types, resolve_type
+from .monitor_types.base import CheckResult, MonitorContext, is_success_status
 
 LOGGER = logging.getLogger(__name__)
 
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
-
-
-@dataclass(slots=True)
-class CheckResult:
-    status: str
-    response_ms: float | None = None
-    http_status: int | None = None
-    packet_loss: float | None = None
-    error: str | None = None
-    content_changed: bool = False
-    content_hash: str | None = None
-    normalized_content: str | None = None
-    raw_excerpt: str | None = None
-    details: dict[str, Any] | None = None
 
 
 class MonitorService:
@@ -85,6 +68,12 @@ class MonitorService:
             raise KeyError(monitor_id)
         return self._hydrate_monitor(row)
 
+    def get_monitor_types(self) -> list[dict[str, Any]]:
+        return list_types()
+
+    def get_presets(self) -> list[dict[str, Any]]:
+        return PRESETS
+
     async def create_monitor(self, payload: dict[str, Any]) -> dict[str, Any]:
         monitor = self._normalize_payload(payload)
         cursor = self.db.execute(
@@ -110,7 +99,7 @@ class MonitorService:
     async def update_monitor(self, monitor_id: int, payload: dict[str, Any]) -> dict[str, Any]:
         current = self.get_monitor(monitor_id)
         merged = {
-            "type": current["type"],
+            "type": payload.get("type", current["type"]),
             "name": payload.get("name", current["name"]),
             "target": payload.get("target", current["target"]),
             "interval_seconds": payload.get("interval_seconds", current["interval_seconds"]),
@@ -121,11 +110,12 @@ class MonitorService:
         self.db.execute(
             """
             UPDATE monitors
-            SET name = ?, target = ?, interval_seconds = ?, enabled = ?,
+            SET type = ?, name = ?, target = ?, interval_seconds = ?, enabled = ?,
                 config_json = ?, updated_at = datetime('now')
             WHERE id = ?
             """,
             (
+                monitor["type"],
                 monitor["name"],
                 monitor["target"],
                 monitor["interval_seconds"],
@@ -153,8 +143,9 @@ class MonitorService:
             result = await self._check(monitor)
             now = utc_now()
             changed = previous_status != result.status
-            website_changed = monitor["type"] == "website" and result.content_changed
-            last_changed_at = now if changed or website_changed else monitor.get("last_changed_at")
+            content_changed = result.content_changed
+            last_changed_at = now if changed or content_changed else monitor.get("last_changed_at")
+            details = result.details or {}
 
             self.db.execute(
                 """
@@ -175,6 +166,7 @@ class MonitorService:
                     monitor_id,
                 ),
             )
+            self._persist_runtime_details(monitor, details)
             self.db.execute(
                 """
                 INSERT INTO monitor_checks(
@@ -195,110 +187,61 @@ class MonitorService:
                     result.status,
                     int(result.content_changed),
                     result.content_hash,
-                    dumps_json(result.details or {}),
+                    dumps_json(
+                        {
+                            "monitor_id": monitor_id,
+                            "monitor_type": monitor["type"],
+                            "status": result.status,
+                            "response_time_ms": result.response_ms,
+                            "checked_at": now,
+                            "error_message": result.error,
+                            **details,
+                        }
+                    ),
                 ),
             )
 
             should_store_snapshot = (
-                monitor["type"] == "website"
+                monitor["type"] == "http_hash"
                 and bool(result.normalized_content)
                 and bool(result.content_hash)
-                and (website_changed or not monitor.get("last_content_hash"))
+                and (content_changed or not monitor.get("last_content_hash"))
             )
             if should_store_snapshot:
                 self._store_snapshot(monitor, result)
 
             updated = self.get_monitor(monitor_id)
             updated["change_count"] = self._change_count(monitor_id)
+            updated["last_details"] = details
             await self.ha.publish_monitor_state(updated)
             if changed:
+                await self._record_event("monitor_status_changed", updated, previous_status, result.status, details)
                 await self._record_event(
-                    "monitor_online" if result.status in {"online", "ok"} else "monitor_offline",
+                    "monitor_online" if is_success_status(result.status) else "monitor_offline",
                     updated,
                     previous_status,
                     result.status,
+                    details,
                 )
-            if website_changed:
-                await self._record_event("website_changed", updated, previous_status, result.status)
-            if result.error and monitor["type"] == "website":
-                await self._record_event("website_error", updated, previous_status, result.status)
+            for event_type in result.events:
+                await self._record_event(event_type, updated, previous_status, result.status, details)
+            if monitor["type"] == "http_hash" and content_changed:
+                await self._record_event("website_changed", updated, previous_status, result.status, details)
+            if monitor["type"] in {"http_status", "http_hash"} and result.error:
+                await self._record_event("website_error", updated, previous_status, result.status, details)
             return updated
         finally:
             self.running.discard(monitor_id)
 
     async def _check(self, monitor: dict[str, Any]) -> CheckResult:
-        if monitor["type"] == "device":
-            return await self._check_device(monitor)
-        return await self._check_website(monitor)
-
-    async def _check_device(self, monitor: dict[str, Any]) -> CheckResult:
         try:
-            target = validate_device_target(monitor["target"])
-            timeout = int(monitor["config"].get("timeout_seconds", self.config.ping_timeout_seconds))
-            started = time.perf_counter()
-            process = await asyncio.create_subprocess_exec(
-                "ping",
-                "-c",
-                "1",
-                "-W",
-                str(timeout),
-                target,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
+            plugin = get_plugin(monitor["type"])
+            return await plugin.check(
+                monitor,
+                MonitorContext(config=self.config, settings=self.get_settings(), ha=self.ha),
             )
-            stdout, stderr = await process.communicate()
-            elapsed_ms = (time.perf_counter() - started) * 1000
-            output = (stdout + stderr).decode(errors="replace")
-            response_ms = _parse_ping_time(output) or elapsed_ms
-            packet_loss = _parse_packet_loss(output, process.returncode)
-            if process.returncode == 0:
-                return CheckResult("online", response_ms=response_ms, packet_loss=packet_loss)
-            return CheckResult(
-                "offline",
-                response_ms=None,
-                packet_loss=packet_loss,
-                error=_short_error(output) or "Ping failed",
-            )
-        except Exception as exc:
-            return CheckResult("offline", error=str(exc), packet_loss=100.0)
-
-    async def _check_website(self, monitor: dict[str, Any]) -> CheckResult:
-        try:
-            url = validate_url(monitor["target"])
-            settings = self.get_settings()
-            ensure_public_url_if_required(url, bool(settings["block_private_networks"]))
-            timeout = float(monitor["config"].get("timeout_seconds", settings["request_timeout_seconds"]))
-            max_bytes = int(monitor["config"].get("max_page_size_kb", settings["max_page_size_kb"])) * 1024
-            started = time.perf_counter()
-            async with httpx.AsyncClient(
-                follow_redirects=True,
-                timeout=timeout,
-                trust_env=False,
-                headers={"User-Agent": "MonitoringCenter/0.1"},
-            ) as client:
-                async with client.stream("GET", url) as response:
-                    body = bytearray()
-                    async for chunk in response.aiter_bytes():
-                        body.extend(chunk)
-                        if len(body) > max_bytes:
-                            raise ValueError("Configured page size limit exceeded")
-            elapsed_ms = (time.perf_counter() - started) * 1000
-            text = bytes(body).decode(response.encoding or "utf-8", errors="replace")
-            normalized = _normalize_content(text, monitor["config"])
-            content_hash = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
-            content_changed = bool(monitor.get("last_content_hash") and monitor["last_content_hash"] != content_hash)
-            status = "ok" if response.status_code < 400 else "error"
-            return CheckResult(
-                status=status,
-                response_ms=elapsed_ms,
-                http_status=response.status_code,
-                content_changed=content_changed,
-                content_hash=content_hash,
-                normalized_content=normalized,
-                raw_excerpt=text[:4000],
-                error=None if status == "ok" else f"HTTP {response.status_code}",
-                details={"final_url": str(response.url), "bytes": len(body)},
-            )
+        except KeyError:
+            return CheckResult("error", error=f"Unsupported monitor type: {monitor['type']}")
         except Exception as exc:
             return CheckResult("error", error=str(exc))
 
@@ -342,6 +285,7 @@ class MonitorService:
         monitor: dict[str, Any],
         previous_state: str | None,
         new_state: str | None,
+        details: dict[str, Any] | None = None,
     ) -> None:
         payload = {
             "monitor_id": monitor["id"],
@@ -351,6 +295,7 @@ class MonitorService:
             "previous_state": previous_state,
             "new_state": new_state,
             "created_at": utc_now(),
+            "details": details or {},
         }
         delivered = await self.ha.fire_event(event_type, payload)
         self.db.execute(
@@ -414,12 +359,12 @@ class MonitorService:
         avg = self.db.fetchone(
             "SELECT AVG(response_ms) AS avg_response_ms FROM monitor_checks WHERE response_ms IS NOT NULL"
         )
-        recent_failures = [row for row in checks if row["status"] in {"offline", "error"}][:8]
+        recent_failures = [row for row in checks if not is_success_status(row["status"])][:8]
         recent_changes = [row for row in checks if row["content_changed"]][:8]
         return {
             "total": len(monitors),
-            "online": len([m for m in monitors if m["status"] in {"online", "ok"}]),
-            "offline": len([m for m in monitors if m["status"] in {"offline", "error"}]),
+            "online": len([m for m in monitors if is_success_status(m["status"])]),
+            "offline": len([m for m in monitors if not is_success_status(m["status"])]),
             "changed_websites": len(recent_changes),
             "avg_response_ms": round(float(avg["avg_response_ms"]), 2) if avg and avg["avg_response_ms"] else None,
             "recent_failures": recent_failures,
@@ -478,6 +423,21 @@ class MonitorService:
             if hasattr(self.config, key):
                 setattr(self.config, key, value)
 
+    def _persist_runtime_details(self, monitor: dict[str, Any], details: dict[str, Any]) -> None:
+        config = dict(monitor.get("config") or {})
+        changed = False
+        if "records" in details:
+            config["last_dns_result"] = details["records"]
+            changed = True
+        if "state" in details:
+            config["last_ha_state"] = details["state"]
+            changed = True
+        if changed:
+            self.db.execute(
+                "UPDATE monitors SET config_json = ?, updated_at = datetime('now') WHERE id = ?",
+                (dumps_json(config), monitor["id"]),
+            )
+
     def _change_count(self, monitor_id: int) -> int:
         row = self.db.fetchone(
             "SELECT COUNT(*) AS count FROM monitor_checks WHERE monitor_id = ? AND content_changed = 1",
@@ -497,7 +457,7 @@ class MonitorService:
             """
         )
         return {
-            "version": "0.1.0",
+            "version": "0.2.0",
             "database_path": str(self.config.database_path),
             "database_exists": self.config.database_path.exists(),
             "database_size_bytes": self.config.database_path.stat().st_size if self.config.database_path.exists() else 0,
@@ -511,22 +471,20 @@ class MonitorService:
         }
 
     def _normalize_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
-        monitor_type = payload["type"]
+        monitor_type = resolve_type(payload["type"])
         config = payload.get("config") or {}
-        if monitor_type == "device":
-            target = validate_device_target(payload["target"])
-            default_interval = self.config.default_device_interval
-        elif monitor_type == "website":
-            target = validate_url(payload["target"])
-            ensure_public_url_if_required(target, self.get_settings()["block_private_networks"])
-            default_interval = self.config.default_website_interval
-        else:
-            raise ValueError("Unsupported monitor type")
+        try:
+            plugin = get_plugin(monitor_type)
+            target, config = plugin.validate(payload["target"], config, self.config)
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
         return {
             "type": monitor_type,
             "name": payload["name"].strip(),
             "target": target,
-            "interval_seconds": int(payload.get("interval_seconds") or default_interval),
+            "interval_seconds": int(payload.get("interval_seconds") or plugin.default_interval),
             "enabled": bool(payload.get("enabled", True)),
             "config": config,
         }
@@ -534,45 +492,6 @@ class MonitorService:
     @staticmethod
     def _hydrate_monitor(row: dict[str, Any]) -> dict[str, Any]:
         row["enabled"] = bool(row["enabled"])
+        row["type"] = resolve_type(row["type"])
         row["config"] = loads_json(row.pop("config_json", None), {})
         return row
-
-
-def _normalize_content(html: str, config: dict[str, Any]) -> str:
-    selector = str(config.get("css_selector") or "").strip()
-    content = html
-    if selector:
-        soup = BeautifulSoup(html, "html.parser")
-        selected = soup.select_one(selector)
-        content = selected.get_text("\n", strip=True) if selected else ""
-    else:
-        soup = BeautifulSoup(html, "html.parser")
-        for tag in soup(["script", "style", "noscript"]):
-            tag.decompose()
-        content = soup.get_text("\n", strip=True)
-
-    ignore_patterns = config.get("ignore_patterns") or []
-    for pattern in ignore_patterns:
-        try:
-            content = re.sub(str(pattern), "", content, flags=re.MULTILINE)
-        except re.error:
-            LOGGER.warning("Ignoring invalid content regex: %s", pattern)
-    content = re.sub(r"\s+", " ", content).strip()
-    return content
-
-
-def _parse_ping_time(output: str) -> float | None:
-    match = re.search(r"time[=<]([\d.]+)\s*ms", output)
-    return float(match.group(1)) if match else None
-
-
-def _parse_packet_loss(output: str, return_code: int) -> float:
-    match = re.search(r"(\d+(?:\.\d+)?)%\s*packet loss", output)
-    if match:
-        return float(match.group(1))
-    return 0.0 if return_code == 0 else 100.0
-
-
-def _short_error(output: str) -> str:
-    lines = [line.strip() for line in output.splitlines() if line.strip()]
-    return lines[-1][:300] if lines else ""
