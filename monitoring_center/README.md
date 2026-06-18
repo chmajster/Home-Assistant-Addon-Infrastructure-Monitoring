@@ -6,6 +6,9 @@ Monitoring Center to lokalny dodatek Home Assistant do monitorowania urządzeń 
 
 - monitorowanie urządzeń po IP albo hostname przez cykliczny ping,
 - predefiniowane typy monitorów i presety w UI,
+- grupy monitorów z osobnymi statystykami,
+- tryb serwisowy dla monitorów i grup,
+- SLO / uptime dla 24h, 7 dni, 30 dni i 90 dni,
 - monitoring portów TCP, DNS, SSL, REST API, encji Home Assistant i MQTT,
 - status online/offline, czas odpowiedzi, utrata pakietów i historia dostępności,
 - monitorowanie URL przez HTTP/HTTPS, kod HTTP, czas odpowiedzi i hash treści,
@@ -73,6 +76,45 @@ Najważniejsze opcje:
 ## Automatyzacje
 
 Przykłady automatyzacji znajdują się w `examples/automations.yaml`.
+
+## Grupy Monitorów
+
+Dodatek tworzy domyślne grupy:
+
+- `Sieć domowa`,
+- `Serwery`,
+- `Strony WWW`,
+- `Home Assistant`,
+- `NAS`.
+
+Monitor można przypisać do grupy przy tworzeniu lub edycji. Grupa pokazuje status zbiorczy, liczbę monitorów, liczbę online/offline oraz własne statystyki SLO.
+
+## Maintenance Mode
+
+Tryb serwisowy można włączyć dla pojedynczego monitora albo całej grupy. Dostępne warianty w UI:
+
+- 30 minut,
+- 2 godziny,
+- ręcznie do wyłączenia.
+
+Podczas aktywnego maintenance mode sprawdzenia nadal są wykonywane i zapisywane w historii, ale eventy Home Assistant są wyciszone. Dzięki temu planowany restart NAS-a albo aktualizacja routera nie generuje fałszywych powiadomień.
+
+## SLO / Uptime
+
+Dashboard i karty grup pokazują statystyki dla okien:
+
+- 24h,
+- 7 dni,
+- 30 dni,
+- 90 dni.
+
+Metryki obejmują:
+
+- procent uptime,
+- średni czas odpowiedzi,
+- liczbę incydentów.
+
+Incydent jest liczony, gdy monitor przechodzi ze stanu poprawnego lub `unknown` do stanu awaryjnego, np. `offline`, `error`, `closed` albo `timeout`.
 
 ## Przykłady Typów Monitorów
 

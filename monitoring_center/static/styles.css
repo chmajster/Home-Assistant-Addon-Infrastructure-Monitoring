@@ -156,6 +156,45 @@ main { padding: 22px clamp(16px, 4vw, 40px) 40px; }
   margin-top: 14px;
 }
 
+.slo-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.slo-card {
+  display: grid;
+  gap: 4px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface-2);
+}
+
+.slo-card span {
+  font-size: 24px;
+  font-weight: 800;
+}
+
+.slo-mini {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  margin-top: 12px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.swatch {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  margin-right: 8px;
+  vertical-align: middle;
+}
+
 .bar {
   height: 58px;
   border-radius: 7px;

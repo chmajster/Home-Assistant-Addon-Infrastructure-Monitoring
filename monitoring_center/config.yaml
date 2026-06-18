@@ -1,5 +1,5 @@
 name: Monitoring Center
-version: "0.2.0"
+version: "0.3.0"
 slug: monitoring_center
 description: Local network and website monitoring center for Home Assistant
 url: https://github.com/local/home-assistant-monitoring

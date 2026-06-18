@@ -4,6 +4,50 @@ Wszystkie istotne zmiany w projekcie **Home Assistant Monitoring / Monitoring Ce
 
 Format opiera się na konwencji Keep a Changelog, a wersjonowanie dodatku powinno podążać za SemVer tam, gdzie ma to zastosowanie.
 
+## [0.3.0] - 2026-06-18
+
+### Added
+
+- Dodano grupy monitorów:
+  - `Sieć domowa`,
+  - `Serwery`,
+  - `Strony WWW`,
+  - `Home Assistant`,
+  - `NAS`.
+- Dodano zarządzanie grupami z poziomu UI.
+- Dodano przypisywanie monitorów do grup.
+- Dodano status grupy, liczbę monitorów, liczbę online/offline i osobne statystyki SLO.
+- Dodano maintenance mode dla monitora:
+  - 30 minut,
+  - 2 godziny,
+  - ręcznie do wyłączenia.
+- Dodano maintenance mode dla grupy z takimi samymi wariantami.
+- Dodano wyciszanie eventów Home Assistant podczas aktywnego maintenance mode monitora albo jego grupy.
+- Dodano statystyki SLO / uptime dla okien:
+  - 24h,
+  - 7 dni,
+  - 30 dni,
+  - 90 dni.
+- Dodano metryki SLO:
+  - procent uptime,
+  - średni czas odpowiedzi,
+  - liczba incydentów.
+- Dodano endpointy:
+  - `GET /api/groups`,
+  - `POST /api/groups`,
+  - `PUT /api/groups/{group_id}`,
+  - `DELETE /api/groups/{group_id}`,
+  - `POST /api/groups/{group_id}/maintenance`,
+  - `DELETE /api/groups/{group_id}/maintenance`,
+  - `POST /api/monitors/{monitor_id}/maintenance`,
+  - `DELETE /api/monitors/{monitor_id}/maintenance`,
+  - `GET /api/slo`.
+
+### Changed
+
+- Dashboard pokazuje teraz globalne SLO / uptime.
+- Eksport konfiguracji obejmuje również grupy monitorów.
+
 ## [0.2.0] - 2026-06-18
 
 ### Added

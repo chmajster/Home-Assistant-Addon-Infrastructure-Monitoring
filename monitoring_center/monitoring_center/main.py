@@ -16,7 +16,7 @@ from .ha import HomeAssistantClient
 from .logging_config import configure_logging
 from .migrations import migrate
 from .monitoring import MonitorService
-from .schemas import MonitorIn, MonitorUpdate, SettingsIn
+from .schemas import GroupIn, GroupUpdate, MaintenanceIn, MonitorIn, MonitorUpdate, SettingsIn
 
 config = AppConfig.load()
 configure_logging(config.log_level, config.log_file)
@@ -25,7 +25,7 @@ migrate(db)
 ha = HomeAssistantClient(config)
 service = MonitorService(db, config, ha)
 
-app = FastAPI(title="Monitoring Center", version="0.2.0")
+app = FastAPI(title="Monitoring Center", version="0.3.0")
 static_path = Path(__file__).resolve().parent.parent / "static"
 scheduler_task: asyncio.Task[Any] | None = None
 
@@ -54,6 +54,11 @@ async def summary() -> dict[str, Any]:
     return service.get_summary()
 
 
+@app.get("/api/slo")
+async def slo(group_id: int | None = None, monitor_id: int | None = None) -> dict[str, Any]:
+    return service.get_slo_stats(group_id=group_id, monitor_id=monitor_id)
+
+
 @app.get("/api/monitors")
 async def monitors() -> list[dict[str, Any]]:
     return service.list_monitors()
@@ -67,6 +72,46 @@ async def monitor_types() -> list[dict[str, Any]]:
 @app.get("/api/presets")
 async def presets() -> list[dict[str, Any]]:
     return service.get_presets()
+
+
+@app.get("/api/groups")
+async def groups() -> list[dict[str, Any]]:
+    return service.list_groups()
+
+
+@app.post("/api/groups")
+async def create_group(payload: GroupIn) -> dict[str, Any]:
+    return service.create_group(payload.model_dump())
+
+
+@app.put("/api/groups/{group_id}")
+async def update_group(group_id: int, payload: GroupUpdate) -> dict[str, Any]:
+    try:
+        return service.update_group(group_id, payload.model_dump(exclude_unset=True))
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Group not found") from exc
+
+
+@app.delete("/api/groups/{group_id}")
+async def delete_group(group_id: int) -> dict[str, str]:
+    service.delete_group(group_id)
+    return {"status": "deleted"}
+
+
+@app.post("/api/groups/{group_id}/maintenance")
+async def set_group_maintenance(group_id: int, payload: MaintenanceIn) -> dict[str, Any]:
+    try:
+        return service.set_group_maintenance(group_id, payload.model_dump())
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Group not found") from exc
+
+
+@app.delete("/api/groups/{group_id}/maintenance")
+async def clear_group_maintenance(group_id: int) -> dict[str, Any]:
+    try:
+        return service.clear_group_maintenance(group_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Group not found") from exc
 
 
 @app.post("/api/monitors")
@@ -96,6 +141,22 @@ async def delete_monitor(monitor_id: int) -> dict[str, str]:
 async def check_monitor(monitor_id: int) -> dict[str, Any]:
     try:
         return await service.run_check(monitor_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Monitor not found") from exc
+
+
+@app.post("/api/monitors/{monitor_id}/maintenance")
+async def set_monitor_maintenance(monitor_id: int, payload: MaintenanceIn) -> dict[str, Any]:
+    try:
+        return service.set_monitor_maintenance(monitor_id, payload.model_dump())
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Monitor not found") from exc
+
+
+@app.delete("/api/monitors/{monitor_id}/maintenance")
+async def clear_monitor_maintenance(monitor_id: int) -> dict[str, Any]:
+    try:
+        return service.clear_monitor_maintenance(monitor_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Monitor not found") from exc
 

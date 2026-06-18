@@ -1,5 +1,6 @@
 const state = {
   monitors: [],
+  groups: [],
   monitorTypes: [],
   presets: [],
   summary: null,
@@ -37,6 +38,7 @@ function bindNavigation() {
 
 function bindForms() {
   $("#monitorForm").addEventListener("submit", saveMonitor);
+  $("#groupForm").addEventListener("submit", saveGroup);
   $("#monitorTypeSelect").addEventListener("change", () => renderTypeFields($("#monitorTypeSelect").value));
   $("#applyPresetBtn").addEventListener("click", applyPreset);
   $("#settingsForm").addEventListener("submit", saveSettings);
@@ -51,22 +53,26 @@ function bindForms() {
 }
 
 async function refreshAll() {
-  const [summary, monitors, settings, monitorTypes, presets] = await Promise.all([
+  const [summary, monitors, groups, settings, monitorTypes, presets] = await Promise.all([
     api("/api/summary"),
     api("/api/monitors"),
+    api("/api/groups"),
     api("/api/settings"),
     api("/api/monitor-types"),
     api("/api/presets"),
   ]);
   state.summary = summary;
   state.monitors = monitors;
+  state.groups = groups;
   state.settings = settings;
   state.monitorTypes = monitorTypes;
   state.presets = presets;
   renderDashboard();
   renderMonitorTypeOptions();
   renderPresetOptions();
+  renderGroupOptions();
   renderMonitorLists();
+  renderGroups();
   renderHistoryMonitorOptions();
   renderSettings();
 }
@@ -99,6 +105,7 @@ function renderDashboard() {
   renderList("#recentFailures", summary.recent_failures || [], checkLine);
   renderList("#recentChanges", summary.recent_changes || [], checkLine);
   renderAvailabilityChart();
+  renderSlo(summary.slo || {});
 }
 
 function renderAvailabilityChart() {
@@ -136,6 +143,26 @@ function renderPresetOptions() {
   $("#presetSelect").innerHTML = '<option value="">Wybierz preset</option>' + state.presets
     .map((preset, index) => `<option value="${index}">${escapeHtml(preset.name)}</option>`)
     .join("");
+}
+
+function renderGroupOptions() {
+  const current = $("#monitorGroupSelect")?.value || "";
+  $("#monitorGroupSelect").innerHTML = '<option value="">Bez grupy</option>' + state.groups
+    .map((group) => `<option value="${group.id}">${escapeHtml(group.name)}</option>`)
+    .join("");
+  $("#monitorGroupSelect").value = current;
+}
+
+function renderSlo(slo) {
+  const root = $("#sloGrid");
+  root.innerHTML = ["24h", "7d", "30d", "90d"].map((key) => {
+    const item = slo[key] || {};
+    return `<article class="slo-card">
+      <strong>${key}</strong>
+      <span>${item.uptime_percent ?? "-"}%</span>
+      <small>Śr. ${item.avg_response_ms ? item.avg_response_ms + " ms" : "-"} · Incydenty ${item.incidents ?? 0}</small>
+    </article>`;
+  }).join("");
 }
 
 function applyPreset() {
@@ -229,6 +256,8 @@ function renderCards(selector, monitors) {
       <div class="meta">
         <span>Interwał: ${monitor.interval_seconds}s</span>
         <span>Typ: ${escapeHtml(typeLabel(monitor.type))}</span>
+        <span>Grupa: ${escapeHtml(monitor.group_name || "Bez grupy")}</span>
+        <span>Maintenance: ${monitor.maintenance_active ? "aktywny do " + formatDate(monitor.maintenance_until || monitor.group_maintenance_until) : "-"}</span>
         <span>Odpowiedź: ${monitor.last_response_ms ? Number(monitor.last_response_ms).toFixed(1) + " ms" : "-"}</span>
         <span>HTTP: ${monitor.last_http_status || "-"}</span>
         <span>Ostatni test: ${formatDate(monitor.last_checked_at)}</span>
@@ -237,6 +266,10 @@ function renderCards(selector, monitors) {
       <div class="actions">
         <button data-action="check" data-id="${monitor.id}">Test</button>
         <button data-action="edit" data-id="${monitor.id}">Edytuj</button>
+        <button data-action="maint-30" data-id="${monitor.id}">Serwis 30m</button>
+        <button data-action="maint-120" data-id="${monitor.id}">Serwis 2h</button>
+        <button data-action="maint-manual" data-id="${monitor.id}">Serwis ręczny</button>
+        ${monitor.maintenance_active ? `<button data-action="maint-clear" data-id="${monitor.id}">Wyłącz serwis</button>` : ""}
         ${monitor.type === "http_hash" ? `<button data-action="snapshots" data-id="${monitor.id}">Zmiany</button>` : ""}
         <button data-action="delete" data-id="${monitor.id}">Usuń</button>
       </div>
@@ -255,12 +288,136 @@ async function handleCardAction(event) {
     refreshAll();
   }
   if (action === "edit") openMonitorForm(monitor);
+  if (action === "maint-30") await setMonitorMaintenance(id, 30);
+  if (action === "maint-120") await setMonitorMaintenance(id, 120);
+  if (action === "maint-manual") await setMonitorMaintenance(id, null);
+  if (action === "maint-clear") await clearMonitorMaintenance(id);
   if (action === "delete" && confirm(`Usunąć monitor "${monitor.name}"?`)) {
     await api(`/api/monitors/${id}`, { method: "DELETE" });
     toast("Monitor usunięty.");
     refreshAll();
   }
   if (action === "snapshots") showSnapshots(id);
+}
+
+function renderGroups() {
+  const root = $("#groupList");
+  if (!state.groups.length) {
+    root.innerHTML = '<p class="empty">Brak grup.</p>';
+    return;
+  }
+  root.innerHTML = state.groups.map((group) => `
+    <article class="card">
+      <div class="card-head">
+        <div>
+          <h2><span class="swatch" style="background:${escapeHtml(group.color)}"></span>${escapeHtml(group.name)}</h2>
+          <p>${escapeHtml(group.description || "")}</p>
+        </div>
+        <span class="badge ${badgeClass(group.status)}">${escapeHtml(group.status)}</span>
+      </div>
+      <div class="meta">
+        <span>Monitory: ${group.monitor_count}</span>
+        <span>Online: ${group.online}</span>
+        <span>Offline: ${group.offline}</span>
+        <span>Maintenance: ${group.maintenance_active ? "aktywny do " + formatDate(group.maintenance_until) : "-"}</span>
+      </div>
+      <div class="slo-mini">${renderSloMini(group.slo || {})}</div>
+      <div class="actions">
+        <button data-group-action="edit" data-id="${group.id}">Edytuj</button>
+        <button data-group-action="maint-30" data-id="${group.id}">Serwis 30m</button>
+        <button data-group-action="maint-120" data-id="${group.id}">Serwis 2h</button>
+        <button data-group-action="maint-manual" data-id="${group.id}">Serwis ręczny</button>
+        ${group.maintenance_active ? `<button data-group-action="maint-clear" data-id="${group.id}">Wyłącz serwis</button>` : ""}
+        <button data-group-action="delete" data-id="${group.id}">Usuń</button>
+      </div>
+    </article>
+  `).join("");
+  $$("[data-group-action]", root).forEach((button) => button.addEventListener("click", handleGroupAction));
+}
+
+function renderSloMini(slo) {
+  return ["24h", "7d", "30d", "90d"].map((key) => {
+    const item = slo[key] || {};
+    return `<span><strong>${key}</strong> ${item.uptime_percent ?? "-"}% · ${item.incidents ?? 0} inc.</span>`;
+  }).join("");
+}
+
+async function handleGroupAction(event) {
+  const id = Number(event.currentTarget.dataset.id);
+  const action = event.currentTarget.dataset.groupAction;
+  const group = state.groups.find((item) => item.id === id);
+  if (action === "edit") {
+    const form = $("#groupForm");
+    form.elements.id.value = group.id;
+    form.elements.name.value = group.name;
+    form.elements.description.value = group.description || "";
+    form.elements.color.value = group.color || "#0f766e";
+    document.querySelector("#groups").scrollIntoView({ behavior: "smooth" });
+  }
+  if (action === "maint-30") await setGroupMaintenance(id, 30);
+  if (action === "maint-120") await setGroupMaintenance(id, 120);
+  if (action === "maint-manual") await setGroupMaintenance(id, null);
+  if (action === "maint-clear") await clearGroupMaintenance(id);
+  if (action === "delete" && confirm(`Usunąć grupę "${group.name}"? Monitory zostaną bez grupy.`)) {
+    await api(`/api/groups/${id}`, { method: "DELETE" });
+    toast("Grupa usunięta.");
+    refreshAll();
+  }
+}
+
+async function saveGroup(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const id = form.elements.id.value;
+  const payload = {
+    name: form.elements.name.value.trim(),
+    description: form.elements.description.value.trim(),
+    color: form.elements.color.value,
+  };
+  await api(id ? `/api/groups/${id}` : "/api/groups", {
+    method: id ? "PUT" : "POST",
+    body: JSON.stringify(payload),
+  });
+  form.reset();
+  form.elements.color.value = "#0f766e";
+  toast("Grupa zapisana.");
+  refreshAll();
+}
+
+async function setMonitorMaintenance(id, minutes) {
+  await api(`/api/monitors/${id}/maintenance`, {
+    method: "POST",
+    body: JSON.stringify({
+      duration_minutes: minutes,
+      reason: minutes ? `Tryb serwisowy ${minutes} min` : "Tryb serwisowy ręczny",
+    }),
+  });
+  toast("Tryb serwisowy monitora włączony.");
+  refreshAll();
+}
+
+async function clearMonitorMaintenance(id) {
+  await api(`/api/monitors/${id}/maintenance`, { method: "DELETE" });
+  toast("Tryb serwisowy monitora wyłączony.");
+  refreshAll();
+}
+
+async function setGroupMaintenance(id, minutes) {
+  await api(`/api/groups/${id}/maintenance`, {
+    method: "POST",
+    body: JSON.stringify({
+      duration_minutes: minutes,
+      reason: minutes ? `Tryb serwisowy ${minutes} min` : "Tryb serwisowy ręczny",
+    }),
+  });
+  toast("Tryb serwisowy grupy włączony.");
+  refreshAll();
+}
+
+async function clearGroupMaintenance(id) {
+  await api(`/api/groups/${id}/maintenance`, { method: "DELETE" });
+  toast("Tryb serwisowy grupy wyłączony.");
+  refreshAll();
 }
 
 function openMonitorForm(monitor) {
@@ -270,6 +427,7 @@ function openMonitorForm(monitor) {
   form.elements.type.value = monitor.type || "ping_host";
   form.elements.name.value = monitor.name || "";
   form.elements.target.value = monitor.target || "";
+  form.elements.group_id.value = monitor.group_id || "";
   form.elements.interval_seconds.value = monitor.interval_seconds || "";
   form.elements.enabled.checked = monitor.enabled !== false;
   form.elements.test_on_save.checked = !monitor.id;
@@ -309,6 +467,7 @@ async function saveMonitor(event) {
     name: form.elements.name.value.trim(),
     target: form.elements.target.value.trim(),
     interval_seconds: form.elements.interval_seconds.value ? Number(form.elements.interval_seconds.value) : null,
+    group_id: form.elements.group_id.value ? Number(form.elements.group_id.value) : null,
     enabled: form.elements.enabled.checked,
     test_on_save: form.elements.test_on_save.checked,
     config,
@@ -390,6 +549,7 @@ function exportConfig() {
   const data = {
     exported_at: new Date().toISOString(),
     settings: state.settings,
+    groups: state.groups.map(({ id, created_at, updated_at, status, monitor_count, online, offline, slo, maintenance_active, ...group }) => group),
     monitors: state.monitors.map(({ id, created_at, updated_at, ...monitor }) => monitor),
   };
   $("#exportBox").value = JSON.stringify(data, null, 2);
@@ -400,10 +560,19 @@ async function importConfig(event) {
   if (!file) return;
   const data = JSON.parse(await file.text());
   if (data.settings) await api("/api/settings", { method: "PUT", body: JSON.stringify(data.settings) });
+  const importedGroups = {};
+  for (const group of data.groups || []) {
+    const savedGroup = await api("/api/groups", {
+      method: "POST",
+      body: JSON.stringify(group),
+    });
+    importedGroups[savedGroup.name] = savedGroup.id;
+  }
   for (const monitor of data.monitors || []) {
+    const mappedGroupId = monitor.group_name ? importedGroups[monitor.group_name] : monitor.group_id;
     await api("/api/monitors", {
       method: "POST",
-      body: JSON.stringify({ ...monitor, test_on_save: false }),
+      body: JSON.stringify({ ...monitor, group_id: mappedGroupId || null, test_on_save: false }),
     });
   }
   toast("Import zakończony.");

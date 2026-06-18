@@ -3,7 +3,7 @@ from __future__ import annotations
 from .database import Database
 
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 def migrate(db: Database) -> None:
@@ -24,6 +24,9 @@ def migrate(db: Database) -> None:
     if version < 2:
         _migration_002(db)
         db.execute("INSERT INTO schema_migrations(version) VALUES (?)", (2,))
+    if version < 3:
+        _migration_003(db)
+        db.execute("INSERT INTO schema_migrations(version) VALUES (?)", (3,))
 
 
 def _migration_001(db: Database) -> None:
@@ -160,5 +163,37 @@ def _migration_002(db: Database) -> None:
         CREATE INDEX IF NOT EXISTS idx_monitors_enabled ON monitors(enabled);
 
         PRAGMA foreign_keys=ON;
+        """
+    )
+
+
+def _migration_003(db: Database) -> None:
+    db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS monitor_groups (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE,
+            description TEXT,
+            color TEXT NOT NULL DEFAULT '#0f766e',
+            maintenance_until TEXT,
+            maintenance_reason TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        INSERT OR IGNORE INTO monitor_groups(name, description, color) VALUES
+            ('Sieć domowa', 'Routery, przełączniki i podstawowa łączność LAN', '#0f766e'),
+            ('Serwery', 'Usługi i hosty serwerowe', '#2563eb'),
+            ('Strony WWW', 'Monitoring stron i endpointów HTTP', '#0891b2'),
+            ('Home Assistant', 'Instancja Home Assistant i jej encje', '#f59e0b'),
+            ('NAS', 'Macierze, SMB i usługi plikowe', '#16a34a');
+
+        ALTER TABLE monitors ADD COLUMN group_id INTEGER REFERENCES monitor_groups(id) ON DELETE SET NULL;
+        ALTER TABLE monitors ADD COLUMN maintenance_until TEXT;
+        ALTER TABLE monitors ADD COLUMN maintenance_reason TEXT;
+
+        CREATE INDEX IF NOT EXISTS idx_monitors_group ON monitors(group_id);
+        CREATE INDEX IF NOT EXISTS idx_groups_maintenance ON monitor_groups(maintenance_until);
+        CREATE INDEX IF NOT EXISTS idx_monitors_maintenance ON monitors(maintenance_until);
         """
     )

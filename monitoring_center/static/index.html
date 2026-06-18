@@ -18,6 +18,7 @@
     <nav class="tabs" aria-label="Sekcje">
       <button class="tab active" data-tab="dashboard">Dashboard</button>
       <button class="tab" data-tab="devices">Monitory</button>
+      <button class="tab" data-tab="groups">Grupy</button>
       <button class="tab" data-tab="websites">Strony WWW</button>
       <button class="tab" data-tab="history">Historia</button>
       <button class="tab" data-tab="settings">Ustawienia</button>
@@ -47,6 +48,10 @@
           <h2>Dostępność</h2>
           <div id="availabilityChart" class="chart"></div>
         </section>
+        <section class="panel">
+          <h2>SLO / Uptime</h2>
+          <div id="sloGrid" class="slo-grid"></div>
+        </section>
       </section>
 
       <section id="devices" class="view">
@@ -59,6 +64,22 @@
           <button id="applyPresetBtn">Skopiuj preset</button>
         </section>
         <div id="deviceList" class="cards"></div>
+      </section>
+
+      <section id="groups" class="view">
+        <div class="section-head">
+          <h2>Grupy monitorów</h2>
+        </div>
+        <section class="panel">
+          <form id="groupForm" class="grid-form">
+            <input type="hidden" name="id" />
+            <label>Nazwa<input name="name" required maxlength="120" placeholder="Sieć domowa" /></label>
+            <label>Opis<input name="description" maxlength="500" placeholder="Opcjonalny opis" /></label>
+            <label>Kolor<input name="color" type="color" value="#0f766e" /></label>
+            <button class="primary">Zapisz grupę</button>
+          </form>
+        </section>
+        <div id="groupList" class="cards"></div>
       </section>
 
       <section id="websites" class="view">
@@ -147,6 +168,7 @@
         <label>Typ monitora<select name="type" id="monitorTypeSelect"></select></label>
         <label>Nazwa<input name="name" required maxlength="120" /></label>
         <label id="targetLabel">Cel<input name="target" required /></label>
+        <label>Grupa<select name="group_id" id="monitorGroupSelect"><option value="">Bez grupy</option></select></label>
         <label>Interwał s<input name="interval_seconds" type="number" min="5" max="86400" /></label>
         <label class="check"><input name="enabled" type="checkbox" checked /> Aktywny</label>
         <div id="tcpOptions" class="nested type-options">

@@ -22,6 +22,19 @@ def utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
+def parse_time(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    normalized = value.replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
 class MonitorService:
     def __init__(self, db: Database, config: AppConfig, ha: HomeAssistantClient) -> None:
         self.db = db
@@ -58,15 +71,78 @@ class MonitorService:
             asyncio.create_task(self.run_check(monitor_id))
 
     def list_monitors(self, enabled_only: bool = False) -> list[dict[str, Any]]:
-        where = "WHERE enabled = 1" if enabled_only else ""
-        rows = self.db.fetchall(f"SELECT * FROM monitors {where} ORDER BY name COLLATE NOCASE")
+        where = "WHERE m.enabled = 1" if enabled_only else ""
+        rows = self.db.fetchall(
+            f"""
+            SELECT m.*, g.name AS group_name, g.maintenance_until AS group_maintenance_until,
+                   g.maintenance_reason AS group_maintenance_reason
+            FROM monitors m
+            LEFT JOIN monitor_groups g ON g.id = m.group_id
+            {where}
+            ORDER BY m.name COLLATE NOCASE
+            """
+        )
         return [self._hydrate_monitor(row) for row in rows]
 
     def get_monitor(self, monitor_id: int) -> dict[str, Any]:
-        row = self.db.fetchone("SELECT * FROM monitors WHERE id = ?", (monitor_id,))
+        row = self.db.fetchone(
+            """
+            SELECT m.*, g.name AS group_name, g.maintenance_until AS group_maintenance_until,
+                   g.maintenance_reason AS group_maintenance_reason
+            FROM monitors m
+            LEFT JOIN monitor_groups g ON g.id = m.group_id
+            WHERE m.id = ?
+            """,
+            (monitor_id,),
+        )
         if not row:
             raise KeyError(monitor_id)
         return self._hydrate_monitor(row)
+
+    def list_groups(self) -> list[dict[str, Any]]:
+        groups = self.db.fetchall("SELECT * FROM monitor_groups ORDER BY name COLLATE NOCASE")
+        monitors = self.list_monitors()
+        return [self._hydrate_group(group, monitors) for group in groups]
+
+    def create_group(self, payload: dict[str, Any]) -> dict[str, Any]:
+        existing = self.db.fetchone(
+            "SELECT * FROM monitor_groups WHERE name = ?",
+            (payload["name"].strip(),),
+        )
+        if existing:
+            return self._hydrate_group(existing, self.list_monitors())
+        cursor = self.db.execute(
+            "INSERT INTO monitor_groups(name, description, color) VALUES (?, ?, ?)",
+            (payload["name"].strip(), payload.get("description"), payload.get("color") or "#0f766e"),
+        )
+        return self.get_group(int(cursor.lastrowid))
+
+    def get_group(self, group_id: int) -> dict[str, Any]:
+        row = self.db.fetchone("SELECT * FROM monitor_groups WHERE id = ?", (group_id,))
+        if not row:
+            raise KeyError(group_id)
+        return self._hydrate_group(row, self.list_monitors())
+
+    def update_group(self, group_id: int, payload: dict[str, Any]) -> dict[str, Any]:
+        current = self.get_group(group_id)
+        self.db.execute(
+            """
+            UPDATE monitor_groups
+            SET name = ?, description = ?, color = ?, updated_at = datetime('now')
+            WHERE id = ?
+            """,
+            (
+                payload.get("name", current["name"]).strip(),
+                payload.get("description", current.get("description")),
+                payload.get("color", current.get("color") or "#0f766e"),
+                group_id,
+            ),
+        )
+        return self.get_group(group_id)
+
+    def delete_group(self, group_id: int) -> None:
+        self.db.execute("UPDATE monitors SET group_id = NULL WHERE group_id = ?", (group_id,))
+        self.db.execute("DELETE FROM monitor_groups WHERE id = ?", (group_id,))
 
     def get_monitor_types(self) -> list[dict[str, Any]]:
         return list_types()
@@ -78,20 +154,21 @@ class MonitorService:
         monitor = self._normalize_payload(payload)
         cursor = self.db.execute(
             """
-            INSERT INTO monitors(type, name, target, interval_seconds, enabled, config_json)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO monitors(type, name, target, interval_seconds, group_id, enabled, config_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 monitor["type"],
                 monitor["name"],
                 monitor["target"],
                 monitor["interval_seconds"],
+                monitor["group_id"],
                 int(monitor["enabled"]),
                 dumps_json(monitor["config"]),
             ),
         )
         created = self.get_monitor(int(cursor.lastrowid))
-        if payload.get("test_on_save", True):
+            if payload.get("test_on_save", True):
             await self.run_check(int(created["id"]))
             created = self.get_monitor(int(created["id"]))
         return created
@@ -103,6 +180,7 @@ class MonitorService:
             "name": payload.get("name", current["name"]),
             "target": payload.get("target", current["target"]),
             "interval_seconds": payload.get("interval_seconds", current["interval_seconds"]),
+            "group_id": payload.get("group_id", current.get("group_id")),
             "enabled": payload.get("enabled", current["enabled"]),
             "config": payload.get("config", current["config"]),
         }
@@ -110,7 +188,7 @@ class MonitorService:
         self.db.execute(
             """
             UPDATE monitors
-            SET type = ?, name = ?, target = ?, interval_seconds = ?, enabled = ?,
+            SET type = ?, name = ?, target = ?, interval_seconds = ?, group_id = ?, enabled = ?,
                 config_json = ?, updated_at = datetime('now')
             WHERE id = ?
             """,
@@ -119,6 +197,7 @@ class MonitorService:
                 monitor["name"],
                 monitor["target"],
                 monitor["interval_seconds"],
+                monitor["group_id"],
                 int(monitor["enabled"]),
                 dumps_json(monitor["config"]),
                 monitor_id,
@@ -214,21 +293,22 @@ class MonitorService:
             updated["change_count"] = self._change_count(monitor_id)
             updated["last_details"] = details
             await self.ha.publish_monitor_state(updated)
-            if changed:
-                await self._record_event("monitor_status_changed", updated, previous_status, result.status, details)
-                await self._record_event(
-                    "monitor_online" if is_success_status(result.status) else "monitor_offline",
-                    updated,
-                    previous_status,
-                    result.status,
-                    details,
-                )
-            for event_type in result.events:
-                await self._record_event(event_type, updated, previous_status, result.status, details)
-            if monitor["type"] == "http_hash" and content_changed:
-                await self._record_event("website_changed", updated, previous_status, result.status, details)
-            if monitor["type"] in {"http_status", "http_hash"} and result.error:
-                await self._record_event("website_error", updated, previous_status, result.status, details)
+            if not self._is_maintenance_active(updated):
+                if changed:
+                    await self._record_event("monitor_status_changed", updated, previous_status, result.status, details)
+                    await self._record_event(
+                        "monitor_online" if is_success_status(result.status) else "monitor_offline",
+                        updated,
+                        previous_status,
+                        result.status,
+                        details,
+                    )
+                for event_type in result.events:
+                    await self._record_event(event_type, updated, previous_status, result.status, details)
+                if monitor["type"] == "http_hash" and content_changed:
+                    await self._record_event("website_changed", updated, previous_status, result.status, details)
+                if monitor["type"] in {"http_status", "http_hash"} and result.error:
+                    await self._record_event("website_error", updated, previous_status, result.status, details)
             return updated
         finally:
             self.running.discard(monitor_id)
@@ -370,6 +450,15 @@ class MonitorService:
             "recent_failures": recent_failures,
             "recent_changes": recent_changes,
             "monitors": monitors,
+            "groups": self.list_groups(),
+            "slo": self.get_slo_stats(),
+        }
+
+    def get_slo_stats(self, group_id: int | None = None, monitor_id: int | None = None) -> dict[str, Any]:
+        windows = {"24h": 1, "7d": 7, "30d": 30, "90d": 90}
+        return {
+            label: self._slo_for_window(days, group_id=group_id, monitor_id=monitor_id)
+            for label, days in windows.items()
         }
 
     def get_snapshots(self, monitor_id: int) -> list[dict[str, Any]]:
@@ -418,6 +507,44 @@ class MonitorService:
                 setattr(self.config, key, value)
         return self.get_settings()
 
+    def set_monitor_maintenance(self, monitor_id: int, payload: dict[str, Any]) -> dict[str, Any]:
+        until = self._maintenance_until(payload)
+        self.db.execute(
+            """
+            UPDATE monitors
+            SET maintenance_until = ?, maintenance_reason = ?, updated_at = datetime('now')
+            WHERE id = ?
+            """,
+            (until, payload.get("reason"), monitor_id),
+        )
+        return self.get_monitor(monitor_id)
+
+    def clear_monitor_maintenance(self, monitor_id: int) -> dict[str, Any]:
+        self.db.execute(
+            "UPDATE monitors SET maintenance_until = NULL, maintenance_reason = NULL, updated_at = datetime('now') WHERE id = ?",
+            (monitor_id,),
+        )
+        return self.get_monitor(monitor_id)
+
+    def set_group_maintenance(self, group_id: int, payload: dict[str, Any]) -> dict[str, Any]:
+        until = self._maintenance_until(payload)
+        self.db.execute(
+            """
+            UPDATE monitor_groups
+            SET maintenance_until = ?, maintenance_reason = ?, updated_at = datetime('now')
+            WHERE id = ?
+            """,
+            (until, payload.get("reason"), group_id),
+        )
+        return self.get_group(group_id)
+
+    def clear_group_maintenance(self, group_id: int) -> dict[str, Any]:
+        self.db.execute(
+            "UPDATE monitor_groups SET maintenance_until = NULL, maintenance_reason = NULL, updated_at = datetime('now') WHERE id = ?",
+            (group_id,),
+        )
+        return self.get_group(group_id)
+
     def _apply_persisted_settings(self) -> None:
         for key, value in self.get_settings().items():
             if hasattr(self.config, key):
@@ -457,17 +584,19 @@ class MonitorService:
             """
         )
         return {
-            "version": "0.2.0",
+            "version": "0.3.0",
             "database_path": str(self.config.database_path),
             "database_exists": self.config.database_path.exists(),
             "database_size_bytes": self.config.database_path.stat().st_size if self.config.database_path.exists() else 0,
             "monitor_count": self.db.fetchone("SELECT COUNT(*) AS count FROM monitors")["count"],
+            "group_count": self.db.fetchone("SELECT COUNT(*) AS count FROM monitor_groups")["count"],
             "last_check": last_check["checked_at"] if last_check else None,
             "running_jobs": sorted(self.running),
             "intervals": {m["id"]: m["interval_seconds"] for m in self.list_monitors()},
             "errors": errors,
             "log_file": str(self.config.log_file),
             "settings": self.get_settings(),
+            "slo": self.get_slo_stats(),
         }
 
     def _normalize_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -485,6 +614,7 @@ class MonitorService:
             "name": payload["name"].strip(),
             "target": target,
             "interval_seconds": int(payload.get("interval_seconds") or plugin.default_interval),
+            "group_id": payload.get("group_id"),
             "enabled": bool(payload.get("enabled", True)),
             "config": config,
         }
@@ -494,4 +624,80 @@ class MonitorService:
         row["enabled"] = bool(row["enabled"])
         row["type"] = resolve_type(row["type"])
         row["config"] = loads_json(row.pop("config_json", None), {})
+        row["maintenance_active"] = _is_future(row.get("maintenance_until")) or _is_future(row.get("group_maintenance_until"))
         return row
+
+    def _hydrate_group(self, row: dict[str, Any], monitors: list[dict[str, Any]]) -> dict[str, Any]:
+        group_monitors = [monitor for monitor in monitors if monitor.get("group_id") == row["id"]]
+        active = _is_future(row.get("maintenance_until"))
+        statuses = [monitor["status"] for monitor in group_monitors]
+        if not group_monitors:
+            status = "empty"
+        elif all(is_success_status(status) for status in statuses):
+            status = "ok"
+        elif any(is_success_status(status) for status in statuses):
+            status = "warning"
+        else:
+            status = "error"
+        row["maintenance_active"] = active
+        row["monitor_count"] = len(group_monitors)
+        row["online"] = len([monitor for monitor in group_monitors if is_success_status(monitor["status"])])
+        row["offline"] = len(group_monitors) - row["online"]
+        row["status"] = status
+        row["slo"] = self.get_slo_stats(group_id=row["id"])
+        return row
+
+    def _slo_for_window(self, days: int, group_id: int | None = None, monitor_id: int | None = None) -> dict[str, Any]:
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).replace(microsecond=0).isoformat()
+        clauses = ["c.checked_at >= ?"]
+        params: list[Any] = [cutoff]
+        if group_id is not None:
+            clauses.append("m.group_id = ?")
+            params.append(group_id)
+        if monitor_id is not None:
+            clauses.append("m.id = ?")
+            params.append(monitor_id)
+        where = " AND ".join(clauses)
+        rows = self.db.fetchall(
+            f"""
+            SELECT c.status, c.response_ms, c.previous_status, c.new_status
+            FROM monitor_checks c
+            JOIN monitors m ON m.id = c.monitor_id
+            WHERE {where}
+            ORDER BY c.monitor_id, c.checked_at ASC, c.id ASC
+            """,
+            params,
+        )
+        total = len(rows)
+        good = len([row for row in rows if is_success_status(row["status"])])
+        avg = [row["response_ms"] for row in rows if row["response_ms"] is not None]
+        incidents = 0
+        for row in rows:
+            previous_status = row["previous_status"]
+            previous_ok = previous_status not in {"offline", "error", "closed", "timeout"}
+            current_ok = is_success_status(row["new_status"] or row["status"])
+            if previous_ok and not current_ok:
+                incidents += 1
+        return {
+            "checks": total,
+            "uptime_percent": round((good / total) * 100, 2) if total else None,
+            "avg_response_ms": round(sum(avg) / len(avg), 2) if avg else None,
+            "incidents": incidents,
+        }
+
+    def _maintenance_until(self, payload: dict[str, Any]) -> str | None:
+        if payload.get("until"):
+            parsed = parse_time(payload["until"])
+            return parsed.replace(microsecond=0).isoformat() if parsed else None
+        minutes = payload.get("duration_minutes")
+        if minutes is None:
+            return "9999-12-31T23:59:59+00:00"
+        return (datetime.now(timezone.utc) + timedelta(minutes=int(minutes))).replace(microsecond=0).isoformat()
+
+    def _is_maintenance_active(self, monitor: dict[str, Any]) -> bool:
+        return _is_future(monitor.get("maintenance_until")) or _is_future(monitor.get("group_maintenance_until"))
+
+
+def _is_future(value: str | None) -> bool:
+    parsed = parse_time(value)
+    return bool(parsed and parsed > datetime.now(timezone.utc))
