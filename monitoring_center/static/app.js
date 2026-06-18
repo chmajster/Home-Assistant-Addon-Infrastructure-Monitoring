@@ -269,7 +269,7 @@ function renderCards(selector, monitors) {
         <button data-action="maint-30" data-id="${monitor.id}">Serwis 30m</button>
         <button data-action="maint-120" data-id="${monitor.id}">Serwis 2h</button>
         <button data-action="maint-manual" data-id="${monitor.id}">Serwis ręczny</button>
-        ${monitor.maintenance_active ? `<button data-action="maint-clear" data-id="${monitor.id}">Wyłącz serwis</button>` : ""}
+        ${monitor.maintenance_until ? `<button data-action="maint-clear" data-id="${monitor.id}">Wyłącz serwis</button>` : ""}
         ${monitor.type === "http_hash" ? `<button data-action="snapshots" data-id="${monitor.id}">Zmiany</button>` : ""}
         <button data-action="delete" data-id="${monitor.id}">Usuń</button>
       </div>
