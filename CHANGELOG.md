@@ -4,6 +4,13 @@ Wszystkie istotne zmiany w projekcie **Home Assistant Monitoring / Monitoring Ce
 
 Format opiera się na konwencji Keep a Changelog, a wersjonowanie dodatku powinno podążać za SemVer tam, gdzie ma to zastosowanie.
 
+## [0.3.1] - 2026-06-18
+
+### Fixed
+
+- Removed the Alpine package install layer from the Docker build to avoid APK repository DNS failures.
+- Replaced the external `ping` binary dependency with a Python ICMP implementation.
+
 ## [0.3.0] - 2026-06-18
 
 ### Added
