@@ -11,17 +11,6 @@ LABEL \
   io.hass.type="app" \
   io.hass.arch="${BUILD_ARCH}"
 
-RUN retries=0; \
-    until apk add --no-cache \
-        iputils \
-        tzdata; do \
-      retries=$((retries + 1)); \
-      if [ "${retries}" -ge 5 ]; then \
-        exit 1; \
-      fi; \
-      sleep $((retries * 5)); \
-    done
-
 WORKDIR /app
 
 COPY requirements.txt /app/

@@ -1,5 +1,5 @@
-#!/usr/bin/env bash
-set -euo pipefail
+#!/usr/bin/env sh
+set -eu
 
 export PYTHONUNBUFFERED=1
 export MONITORING_CENTER_OPTIONS="${MONITORING_CENTER_OPTIONS:-/data/options.json}"
