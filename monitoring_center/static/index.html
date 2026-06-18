@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="pl">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Monitoring Center</title>
+    <link rel="stylesheet" href="static/styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <h1>Monitoring Center</h1>
+        <p>Lokalny monitoring urządzeń, stron WWW, historii i zdarzeń Home Assistant.</p>
+      </div>
+      <button id="refreshBtn" class="primary">Odśwież</button>
+    </header>
+
+    <nav class="tabs" aria-label="Sekcje">
+      <button class="tab active" data-tab="dashboard">Dashboard</button>
+      <button class="tab" data-tab="devices">Urządzenia</button>
+      <button class="tab" data-tab="websites">Strony WWW</button>
+      <button class="tab" data-tab="history">Historia</button>
+      <button class="tab" data-tab="settings">Ustawienia</button>
+      <button class="tab" data-tab="diagnostics">Diagnostyka</button>
+    </nav>
+
+    <main>
+      <section id="dashboard" class="view active">
+        <div class="metrics">
+          <article><span id="metricTotal">0</span><small>Monitorów</small></article>
+          <article><span id="metricOnline">0</span><small>Online</small></article>
+          <article><span id="metricOffline">0</span><small>Offline</small></article>
+          <article><span id="metricChanged">0</span><small>Zmian WWW</small></article>
+          <article><span id="metricAvg">-</span><small>Śr. odpowiedź</small></article>
+        </div>
+        <div class="split">
+          <section class="panel">
+            <h2>Ostatnie awarie</h2>
+            <div id="recentFailures" class="list empty">Brak danych</div>
+          </section>
+          <section class="panel">
+            <h2>Ostatnie zmiany WWW</h2>
+            <div id="recentChanges" class="list empty">Brak danych</div>
+          </section>
+        </div>
+        <section class="panel">
+          <h2>Dostępność</h2>
+          <div id="availabilityChart" class="chart"></div>
+        </section>
+      </section>
+
+      <section id="devices" class="view">
+        <div class="section-head">
+          <h2>Urządzenia</h2>
+          <button data-open-form="device" class="primary">Dodaj urządzenie</button>
+        </div>
+        <div id="deviceList" class="cards"></div>
+      </section>
+
+      <section id="websites" class="view">
+        <div class="section-head">
+          <h2>Strony WWW</h2>
+          <button data-open-form="website" class="primary">Dodaj stronę</button>
+        </div>
+        <div id="websiteList" class="cards"></div>
+      </section>
+
+      <section id="history" class="view">
+        <section class="panel filters">
+          <label>Monitor<select id="historyMonitor"><option value="">Wszystkie</option></select></label>
+          <label>Typ<select id="historyType"><option value="">Wszystkie</option><option value="device">Urządzenia</option><option value="website">WWW</option></select></label>
+          <label>Status<input id="historyStatus" placeholder="online, offline, ok, error" /></label>
+          <label>Od<input id="historyFrom" type="datetime-local" /></label>
+          <label>Do<input id="historyTo" type="datetime-local" /></label>
+          <button id="historyApply" class="primary">Filtruj</button>
+          <button id="historyClean">Wyczyść stare</button>
+        </section>
+        <section class="panel table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Data</th>
+                <th>Monitor</th>
+                <th>Status</th>
+                <th>Odpowiedź</th>
+                <th>HTTP</th>
+                <th>Utrata</th>
+                <th>Błąd</th>
+              </tr>
+            </thead>
+            <tbody id="historyRows"></tbody>
+          </table>
+        </section>
+      </section>
+
+      <section id="settings" class="view">
+        <section class="panel">
+          <h2>Ustawienia</h2>
+          <form id="settingsForm" class="grid-form">
+            <label>Retencja dni<input name="retention_days" type="number" min="1" max="3650" /></label>
+            <label>Timeout HTTP s<input name="request_timeout_seconds" type="number" min="1" max="120" /></label>
+            <label>Timeout ping s<input name="ping_timeout_seconds" type="number" min="1" max="30" /></label>
+            <label>Limit strony KB<input name="max_page_size_kb" type="number" min="16" max="10240" /></label>
+            <label>Prefix encji<input name="entity_prefix" maxlength="64" /></label>
+            <label class="check"><input name="block_private_networks" type="checkbox" /> Blokuj prywatne adresy dla URL</label>
+            <label class="check"><input name="publish_home_assistant_entities" type="checkbox" /> Publikuj encje Home Assistant</label>
+            <label class="check"><input name="publish_home_assistant_events" type="checkbox" /> Publikuj eventy Home Assistant</label>
+            <button class="primary">Zapisz ustawienia</button>
+          </form>
+        </section>
+        <section class="panel">
+          <h2>Import / Export</h2>
+          <div class="actions">
+            <button id="exportBtn">Eksport JSON</button>
+            <label class="file-button">Import JSON<input id="importFile" type="file" accept="application/json" /></label>
+          </div>
+          <textarea id="exportBox" rows="10" spellcheck="false" readonly></textarea>
+        </section>
+      </section>
+
+      <section id="diagnostics" class="view">
+        <div class="split">
+          <section class="panel">
+            <h2>Diagnostyka</h2>
+            <dl id="diagnosticsData" class="diagnostics"></dl>
+          </section>
+          <section class="panel">
+            <h2>Zdarzenia</h2>
+            <div id="eventsList" class="list empty">Brak danych</div>
+          </section>
+        </div>
+        <section class="panel">
+          <h2>Logi aplikacji</h2>
+          <pre id="logsBox"></pre>
+        </section>
+      </section>
+    </main>
+
+    <dialog id="monitorDialog">
+      <form id="monitorForm" method="dialog">
+        <input type="hidden" name="id" />
+        <input type="hidden" name="type" />
+        <h2 id="dialogTitle">Monitor</h2>
+        <label>Nazwa<input name="name" required maxlength="120" /></label>
+        <label id="targetLabel">Cel<input name="target" required /></label>
+        <label>Interwał s<input name="interval_seconds" type="number" min="5" max="86400" /></label>
+        <label class="check"><input name="enabled" type="checkbox" checked /> Aktywny</label>
+        <div id="websiteOptions" class="nested">
+          <label>Selektor CSS<input name="css_selector" placeholder="np. main article" /></label>
+          <label>Ignorowane regexy<textarea name="ignore_patterns" rows="4" placeholder="Jedna reguła na linię"></textarea></label>
+          <label>Limit strony KB<input name="max_page_size_kb" type="number" min="16" max="10240" /></label>
+        </div>
+        <label>Timeout s<input name="timeout_seconds" type="number" min="1" max="120" /></label>
+        <label class="check"><input name="test_on_save" type="checkbox" checked /> Testuj przy zapisie</label>
+        <menu>
+          <button value="cancel">Anuluj</button>
+          <button id="saveMonitorBtn" value="default" class="primary">Zapisz</button>
+        </menu>
+      </form>
+    </dialog>
+
+    <dialog id="snapshotDialog">
+      <form method="dialog">
+        <h2>Ostatnie zmiany</h2>
+        <pre id="snapshotDiff"></pre>
+        <menu><button>Zamknij</button></menu>
+      </form>
+    </dialog>
+
+    <div id="toast" role="status"></div>
+    <script src="static/app.js"></script>
+  </body>
+</html>

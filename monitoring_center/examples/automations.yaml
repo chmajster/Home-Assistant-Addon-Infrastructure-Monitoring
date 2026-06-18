@@ -1,0 +1,52 @@
+- alias: Monitoring Center - urządzenie offline
+  mode: single
+  trigger:
+    - platform: event
+      event_type: monitor_offline
+  action:
+    - service: persistent_notification.create
+      data:
+        title: "Monitor offline"
+        message: >
+          {{ trigger.event.data.monitor_name }} jest offline.
+          Cel: {{ trigger.event.data.target }}
+
+- alias: Monitoring Center - strona zmieniona
+  mode: queued
+  trigger:
+    - platform: event
+      event_type: website_changed
+  action:
+    - service: persistent_notification.create
+      data:
+        title: "Wykryto zmianę strony"
+        message: >
+          {{ trigger.event.data.monitor_name }} zmieniła zawartość.
+          Poprzedni stan: {{ trigger.event.data.previous_state }},
+          nowy stan: {{ trigger.event.data.new_state }}.
+
+- alias: Monitoring Center - encja binary_sensor offline
+  mode: single
+  trigger:
+    - platform: state
+      entity_id: binary_sensor.monitoring_center_1_router_status
+      to: "off"
+      for: "00:02:00"
+  action:
+    - service: notify.mobile_app_your_phone
+      data:
+        title: "Router offline"
+        message: "Monitoring Center nie widzi routera od 2 minut."
+
+- alias: Monitoring Center - błąd strony WWW
+  mode: queued
+  trigger:
+    - platform: event
+      event_type: website_error
+  action:
+    - service: logbook.log
+      data:
+        name: Monitoring Center
+        message: >
+          Błąd strony {{ trigger.event.data.monitor_name }}:
+          {{ trigger.event.data.new_state }}

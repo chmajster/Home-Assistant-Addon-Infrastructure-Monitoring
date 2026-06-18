@@ -1,0 +1,42 @@
+configuration:
+  log_level:
+    name: Poziom logowania
+    description: Szczegółowość logów aplikacji.
+  database_path:
+    name: Ścieżka bazy SQLite
+    description: Lokalizacja pliku bazy danych w kontenerze.
+  log_file:
+    name: Plik logu
+    description: Lokalizacja pliku logu aplikacji.
+  retention_days:
+    name: Retencja danych
+    description: Liczba dni przechowywania historii, snapshotów i eventów.
+  default_device_interval:
+    name: Domyślny interwał urządzeń
+    description: Domyślny interwał sprawdzania urządzeń w sekundach.
+  default_website_interval:
+    name: Domyślny interwał stron WWW
+    description: Domyślny interwał sprawdzania stron w sekundach.
+  request_timeout_seconds:
+    name: Timeout HTTP
+    description: Maksymalny czas żądania HTTP w sekundach.
+  ping_timeout_seconds:
+    name: Timeout ping
+    description: Maksymalny czas oczekiwania na ping w sekundach.
+  max_page_size_kb:
+    name: Limit rozmiaru strony
+    description: Maksymalny rozmiar pobieranej strony w KB.
+  block_private_networks:
+    name: Blokuj prywatne adresy URL
+    description: Blokuje URL-e rozwiązujące się do adresów lokalnych i prywatnych.
+  publish_home_assistant_entities:
+    name: Publikuj encje HA
+    description: Tworzy stany encji binary_sensor i sensor przez lokalne API Home Assistant.
+  publish_home_assistant_events:
+    name: Publikuj eventy HA
+    description: Wysyła eventy monitor_online, monitor_offline, website_changed i website_error.
+  entity_prefix:
+    name: Prefix encji
+    description: Prefix używany w nazwach encji Home Assistant.
+network:
+  8099/tcp: Panel WWW Monitoring Center

@@ -1,0 +1,42 @@
+configuration:
+  log_level:
+    name: Log level
+    description: Application log verbosity.
+  database_path:
+    name: SQLite database path
+    description: Database file location inside the container.
+  log_file:
+    name: Log file
+    description: Application log file location.
+  retention_days:
+    name: Data retention
+    description: Number of days to keep history, snapshots and events.
+  default_device_interval:
+    name: Default device interval
+    description: Default device check interval in seconds.
+  default_website_interval:
+    name: Default website interval
+    description: Default website check interval in seconds.
+  request_timeout_seconds:
+    name: HTTP timeout
+    description: Maximum HTTP request duration in seconds.
+  ping_timeout_seconds:
+    name: Ping timeout
+    description: Maximum ping wait time in seconds.
+  max_page_size_kb:
+    name: Page size limit
+    description: Maximum downloaded page size in KB.
+  block_private_networks:
+    name: Block private URL addresses
+    description: Blocks URLs resolving to local and private addresses.
+  publish_home_assistant_entities:
+    name: Publish HA entities
+    description: Creates binary_sensor and sensor states through the local Home Assistant API.
+  publish_home_assistant_events:
+    name: Publish HA events
+    description: Fires monitor_online, monitor_offline, website_changed and website_error events.
+  entity_prefix:
+    name: Entity prefix
+    description: Prefix used for Home Assistant entity IDs.
+network:
+  8099/tcp: Monitoring Center web panel
