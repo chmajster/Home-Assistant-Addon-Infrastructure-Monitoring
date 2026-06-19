@@ -1,5 +1,5 @@
-ARG BUILD_FROM=ghcr.io/home-assistant/base-python:3.13-alpine3.24
-FROM ${BUILD_FROM}
+ARG BUILD_ARCH=amd64
+FROM ghcr.io/home-assistant/${BUILD_ARCH}-base-python:3.13-alpine3.24
 
 ARG BUILD_VERSION=0.3.1
 ARG BUILD_ARCH=amd64
@@ -14,9 +14,10 @@ LABEL \
 WORKDIR /app
 
 COPY requirements.txt /app/
+COPY wheels /wheels
 RUN python -m venv /opt/monitoring-center \
-  && /opt/monitoring-center/bin/pip install --no-cache-dir --upgrade pip \
-  && /opt/monitoring-center/bin/pip install --no-cache-dir -r /app/requirements.txt
+  && /opt/monitoring-center/bin/pip install --no-cache-dir --no-index --find-links=/wheels -r /app/requirements.txt \
+  && rm -rf /wheels
 
 COPY monitoring_center /app/monitoring_center
 COPY static /app/static

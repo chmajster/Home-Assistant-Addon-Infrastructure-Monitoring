@@ -10,6 +10,8 @@ Format opiera się na konwencji Keep a Changelog, a wersjonowanie dodatku powinn
 
 - Removed the Alpine package install layer from the Docker build to avoid APK repository DNS failures.
 - Replaced the external `ping` binary dependency with a Python ICMP implementation.
+- Moved add-on build base image selection into `Dockerfile` and removed deprecated `build.yaml`.
+- Vendored Python wheels so Supervisor can build the add-on without DNS access to PyPI.
 
 ## [0.3.0] - 2026-06-18
 

@@ -79,15 +79,15 @@ def _wait_for_topic(host: str, port: int, topic: str, config: dict[str, Any]) ->
     password = str(config.get("password") or "")
     received: dict[str, str] = {}
 
-    def on_connect(client: Any, userdata: Any, flags: Any, rc: int) -> None:
-        if rc == 0:
+    def on_connect(client: Any, userdata: Any, flags: Any, reason_code: Any, properties: Any) -> None:
+        if reason_code == 0:
             client.subscribe(topic)
 
     def on_message(client: Any, userdata: Any, message: Any) -> None:
         received["payload"] = message.payload.decode(errors="replace")
         client.disconnect()
 
-    client = mqtt.Client()
+    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
     if username:
         client.username_pw_set(username, password or None)
     client.on_connect = on_connect

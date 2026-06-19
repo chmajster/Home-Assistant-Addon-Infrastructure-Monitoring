@@ -168,7 +168,7 @@ class MonitorService:
             ),
         )
         created = self.get_monitor(int(cursor.lastrowid))
-            if payload.get("test_on_save", True):
+        if payload.get("test_on_save", True):
             await self.run_check(int(created["id"]))
             created = self.get_monitor(int(created["id"]))
         return created
