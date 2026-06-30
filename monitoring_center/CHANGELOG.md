@@ -2,6 +2,23 @@
 
 All notable changes to the **Monitoring Center** Home Assistant add-on are documented here.
 
+## [0.5.2] - 2026-06-30
+
+### Changed
+
+- Moved monitor-specific actions out of monitor cards and table rows into the monitor detail view.
+- Added clearer hover background for clickable monitor cards and table rows.
+- Bumped add-on and application metadata version to `0.5.2`.
+
+## [0.5.1] - 2026-06-30
+
+### Changed
+
+- Clarified monitor search labels in the shared Monitors view.
+- Added monitor search/jump control to the monitor detail screen.
+- Ensured monitor cards open the detail view while target links remain independently clickable.
+- Bumped add-on and application metadata version to `0.5.1`.
+
 ## [0.5.0] - 2026-06-30
 
 ### Added

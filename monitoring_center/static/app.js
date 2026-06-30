@@ -63,6 +63,12 @@ function bindNavigation() {
     if (!state.selectedMonitorId) return;
     await startMonitorTestRun(state.selectedMonitorId, "monitorDetail");
   });
+  $("#detailMonitorSearch").addEventListener("change", goToDetailMonitorFromSearch);
+  $("#detailMonitorSearch").addEventListener("keydown", (event) => {
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    goToDetailMonitorFromSearch();
+  });
   $("#detailSnapshotsBtn").addEventListener("click", () => {
     if (state.selectedMonitorId) showSnapshots(state.selectedMonitorId);
   });
@@ -146,6 +152,7 @@ async function refreshAll() {
   renderMonitorLists();
   renderGroups();
   renderHistoryMonitorOptions();
+  renderDetailMonitorOptions();
   renderSettings();
   if ($("#monitorDetail").classList.contains("active") && state.selectedMonitorId) {
     renderMonitorDetailsShell(state.selectedMonitorId);
@@ -303,6 +310,40 @@ function renderMonitorTypeOptions() {
   const historyCurrent = $("#historyType").value;
   $("#historyType").innerHTML = '<option value="">Wszystkie</option>' + options;
   $("#historyType").value = historyCurrent;
+}
+
+function renderDetailMonitorOptions() {
+  const list = $("#detailMonitorOptions");
+  if (!list) return;
+  list.innerHTML = state.monitors
+    .map((monitor) => `<option value="${escapeHtml(detailMonitorValue(monitor))}"></option>`)
+    .join("");
+  const current = state.monitors.find((monitor) => monitor.id === state.selectedMonitorId);
+  if (current && $("#monitorDetail").classList.contains("active")) {
+    $("#detailMonitorSearch").value = detailMonitorValue(current);
+  }
+}
+
+function detailMonitorValue(monitor) {
+  return `${monitor.name} | ${typeLabel(monitor.type)} | ${monitor.target}`;
+}
+
+function goToDetailMonitorFromSearch() {
+  const query = $("#detailMonitorSearch").value.trim().toLowerCase();
+  if (!query) return;
+  const monitor = state.monitors.find((item) => (
+    detailMonitorValue(item).toLowerCase() === query
+    || item.name.toLowerCase() === query
+    || String(item.id) === query
+  )) || state.monitors.find((item) => (
+    detailMonitorValue(item).toLowerCase().includes(query)
+    || item.target.toLowerCase().includes(query)
+  ));
+  if (!monitor) {
+    toast("Nie znaleziono monitoringu.", "error");
+    return;
+  }
+  showMonitorDetails(monitor.id);
 }
 
 function renderPresetOptions() {
@@ -473,11 +514,11 @@ function sortMonitors(monitors, sortKey) {
 function renderMonitorTable(monitors) {
   const body = $("#monitorTableRows");
   if (!monitors.length) {
-    body.innerHTML = '<tr><td colspan="11" class="empty">Brak monitorów dla wybranych filtrów.</td></tr>';
+    body.innerHTML = '<tr><td colspan="10" class="empty">Brak monitorów dla wybranych filtrów.</td></tr>';
     return;
   }
   body.innerHTML = monitors.map((monitor) => `
-    <tr>
+    <tr class="clickable-row" data-card-id="${monitor.id}" tabindex="0" title="Otwórz szczegóły monitoringu">
       <td><span class="badge ${monitor.enabled ? badgeClass(monitor.status) : "unknown"}">${monitor.enabled ? escapeHtml(monitor.status) : "wyłączony"}</span></td>
       <td>${escapeHtml(typeLabel(monitor.type))}</td>
       <td><strong>${escapeHtml(monitor.name)}</strong></td>
@@ -488,10 +529,19 @@ function renderMonitorTable(monitors) {
       <td>${escapeHtml(monitor.group_name || "Bez grupy")}</td>
       <td>${formatDate(monitor.last_checked_at)}</td>
       <td>${monitor.maintenance_active ? formatDate(monitor.maintenance_until || monitor.group_maintenance_until) : "-"}</td>
-      <td><div class="actions table-actions">${renderCardActions(monitor)}</div></td>
     </tr>
   `).join("");
-  $$("[data-action]", body).forEach((button) => button.addEventListener("click", handleCardAction));
+  $$("[data-card-id]", body).forEach((row) => {
+    row.addEventListener("click", (event) => {
+      if (event.target.closest("a")) return;
+      showMonitorDetails(Number(row.dataset.cardId));
+    });
+    row.addEventListener("keydown", (event) => {
+      if (!["Enter", " "].includes(event.key)) return;
+      event.preventDefault();
+      showMonitorDetails(Number(row.dataset.cardId));
+    });
+  });
 }
 
 function targetHtml(monitor) {
@@ -543,7 +593,7 @@ function renderCards(selector, monitors, options = {}) {
     return;
   }
   root.innerHTML = monitors.map((monitor) => `
-    <article class="card ${options.details ? "clickable-card" : ""} ${monitor.enabled ? "" : "inactive"}" data-card-id="${monitor.id}" tabindex="${options.details ? "0" : "-1"}">
+    <article class="card ${options.details ? "clickable-card" : ""} ${monitor.enabled ? "" : "inactive"}" data-card-id="${monitor.id}" tabindex="${options.details ? "0" : "-1"}" title="Otwórz szczegóły monitoringu">
       <div class="card-head">
         <div>
           <h2>${escapeHtml(monitor.name)}</h2>
@@ -554,16 +604,12 @@ function renderCards(selector, monitors, options = {}) {
       <div class="meta">
         ${renderMonitorMeta(monitor)}
       </div>
-      <div class="actions">
-        ${renderCardActions(monitor)}
-      </div>
     </article>
   `).join("");
-  $$("[data-action]", root).forEach((button) => button.addEventListener("click", handleCardAction));
   if (options.details) {
     $$("[data-card-id]", root).forEach((card) => {
       card.addEventListener("click", (event) => {
-        if (event.target.closest(".actions")) return;
+        if (event.target.closest(".actions, a")) return;
         showMonitorDetails(Number(card.dataset.cardId));
       });
       card.addEventListener("keydown", (event) => {
@@ -631,8 +677,6 @@ function renderMonitorMeta(monitor) {
 
 function renderCardActions(monitor) {
   return `
-    <button data-action="check" data-id="${monitor.id}" class="primary">Test</button>
-    <button data-action="edit" data-id="${monitor.id}">Edytuj</button>
     <details class="action-menu">
       <summary aria-label="Akcje serwisowe monitora ${escapeHtml(monitor.name)}">Serwis</summary>
       <button data-action="maintenance" data-id="${monitor.id}">Ustaw serwis</button>
@@ -672,7 +716,11 @@ async function handleCardAction(event) {
   if (action === "delete" && confirm(`Usunąć monitor "${monitor.name}"?`)) {
     await api(`/api/monitors/${id}`, { method: "DELETE" });
     toast("Monitor usunięty.");
-    refreshAll();
+    await refreshAll();
+    if ($("#monitorDetail").classList.contains("active") && state.selectedMonitorId === id) {
+      state.selectedMonitorId = null;
+      showView("devices");
+    }
   }
   if (action === "snapshots") showSnapshots(id);
 }
@@ -885,6 +933,9 @@ function renderMonitorDetailsShell(id) {
   }
   $("#detailTitle").textContent = monitor.name;
   $("#detailSubtitle").textContent = `${typeLabel(monitor.type)} · ${monitor.target}`;
+  $("#detailMonitorSearch").value = detailMonitorValue(monitor);
+  $("#detailExtraActions").innerHTML = renderCardActions(monitor);
+  $$("[data-action]", $("#detailExtraActions")).forEach((button) => button.addEventListener("click", handleCardAction));
   $("#detailSnapshotsSection").classList.toggle("hidden", monitor.type !== "http_hash");
   $("#detailMetrics").innerHTML = [
     ["Status", `<span class="badge ${badgeClass(monitor.status)}">${escapeHtml(monitor.status)}</span>`],

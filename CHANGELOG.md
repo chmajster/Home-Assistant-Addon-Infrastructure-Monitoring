@@ -4,6 +4,23 @@ Wszystkie istotne zmiany w projekcie **Home Assistant Monitoring / Monitoring Ce
 
 Format opiera się na konwencji Keep a Changelog, a wersjonowanie dodatku powinno podążać za SemVer tam, gdzie ma to zastosowanie.
 
+## [0.5.2] - 2026-06-30
+
+### Changed
+
+- Przeniesiono akcje konkretnego monitoringu z kafelków i wierszy tabeli do widoku szczegółów monitora.
+- Dodano wyraźniejszy hover background dla klikalnych kafelków i wierszy monitoringu.
+- Podniesiono wersję dodatku i metadanych aplikacji do `0.5.2`.
+
+## [0.5.1] - 2026-06-30
+
+### Changed
+
+- Doprecyzowano etykiety wyszukiwarki w widoku `Monitory`.
+- Dodano wyszukiwarkę/przełącznik monitoringu na stronie szczegółów monitora.
+- Upewniono się, że kliknięcie kafelka otwiera szczegóły monitoringu, a link celu działa niezależnie.
+- Podniesiono wersję dodatku i metadanych aplikacji do `0.5.1`.
+
 ## [0.5.0] - 2026-06-30
 
 ### Added

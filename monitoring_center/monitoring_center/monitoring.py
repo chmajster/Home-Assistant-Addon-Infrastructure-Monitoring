@@ -636,7 +636,7 @@ class MonitorService:
             """
         )
         return {
-            "version": "0.5.0",
+            "version": "0.5.2",
             "database_path": str(self.config.database_path),
             "database_exists": self.config.database_path.exists(),
             "database_size_bytes": self.config.database_path.stat().st_size if self.config.database_path.exists() else 0,

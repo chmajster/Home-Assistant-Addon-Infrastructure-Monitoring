@@ -3,6 +3,7 @@
   --bg: #f6f7f9;
   --surface: #ffffff;
   --surface-2: #eef3f4;
+  --surface-hover: #e8f4f2;
   --text: #172026;
   --muted: #66727d;
   --line: #d9e0e4;
@@ -20,6 +21,7 @@
   --bg: #101418;
   --surface: #171d22;
   --surface-2: #20282f;
+  --surface-hover: #22322f;
   --text: #edf2f5;
   --muted: #9aa7b2;
   --line: #303941;
@@ -177,6 +179,7 @@ main { padding: 22px clamp(16px, 4vw, 40px) 40px; }
 .clickable-card:hover,
 .clickable-card:focus-visible {
   border-color: var(--primary);
+  background: var(--surface-hover);
   transform: translateY(-1px);
   outline: none;
 }
@@ -209,7 +212,23 @@ main { padding: 22px clamp(16px, 4vw, 40px) 40px; }
 .meta { display: grid; gap: 5px; color: var(--muted); font-size: 14px; overflow-wrap: anywhere; }
 .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
 .compact-actions { margin-top: 0; justify-content: flex-end; }
-.table-actions { margin-top: 0; min-width: 260px; }
+.detail-search {
+  min-width: min(320px, 100%);
+}
+
+.detail-search input {
+  min-height: 38px;
+}
+.clickable-row {
+  cursor: pointer;
+}
+
+.clickable-row:hover,
+.clickable-row:focus-visible {
+  background: var(--surface-hover);
+  outline: none;
+}
+
 .action-menu {
   position: relative;
 }

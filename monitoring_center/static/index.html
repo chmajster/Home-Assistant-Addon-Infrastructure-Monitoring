@@ -87,7 +87,7 @@
             <option value="disabled">Wyłączone</option>
           </select></label>
           <label>Grupa<select id="monitorGroupFilter"></select></label>
-          <label>Filtr<input id="monitorSearch" placeholder="Nazwa, host, URL, status" /></label>
+          <label>Wyszukaj monitoring<input id="monitorSearch" placeholder="Nazwa, host, URL, status" /></label>
           <label>Sortuj<select id="monitorSort">
             <option value="name">Nazwa</option>
             <option value="status">Status</option>
@@ -118,7 +118,6 @@
                 <th>Grupa</th>
                 <th>Ostatni test</th>
                 <th>Maintenance</th>
-                <th>Akcje</th>
               </tr>
             </thead>
             <tbody id="monitorTableRows"></tbody>
@@ -149,9 +148,12 @@
             <p id="detailSubtitle"></p>
           </div>
           <div class="actions compact-actions">
+            <label class="detail-search">Wyszukaj monitoring<input id="detailMonitorSearch" list="detailMonitorOptions" placeholder="Nazwa, host, URL" /></label>
+            <datalist id="detailMonitorOptions"></datalist>
             <button id="detailBackBtn">Wróć</button>
             <button id="detailEditBtn">Edytuj</button>
             <button id="detailCheckBtn" class="primary">Test</button>
+            <div id="detailExtraActions" class="actions compact-actions"></div>
           </div>
         </div>
         <div id="detailMetrics" class="metrics detail-metrics"></div>
