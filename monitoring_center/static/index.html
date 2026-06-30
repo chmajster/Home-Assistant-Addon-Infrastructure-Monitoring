@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Monitoring Center</title>
-    <link rel="stylesheet" href="static/styles.css?v=0.5.5" />
+    <link rel="stylesheet" href="static/styles.css?v=0.5.6" />
   </head>
   <body>
     <header class="topbar">
@@ -273,6 +273,7 @@
           <h2>Ustawienia</h2>
           <form id="settingsForm" class="grid-form">
             <label>Retencja dni<input name="retention_days" type="number" min="1" max="3650" /></label>
+            <label>Domyślny interwał s<input name="default_interval_seconds" type="number" min="5" max="86400" /></label>
             <label>Timeout min<input name="default_timeout_minutes" type="number" min="0.01" step="0.01" /></label>
             <label>Limit strony MB<input name="max_page_size_mb" type="number" min="0.01" step="0.01" /></label>
             <label>Prefix encji<input name="entity_prefix" maxlength="64" /></label>
@@ -318,7 +319,7 @@
         <label>Nazwa<input name="name" required maxlength="120" /></label>
         <label id="targetLabel">Cel<input name="target" required /></label>
         <label>Grupa<select name="group_id" id="monitorGroupSelect"><option value="">Bez grupy</option></select></label>
-        <label>Interwał s<input name="interval_seconds" type="number" min="5" max="86400" /></label>
+        <label>Interwał s<input name="interval_seconds" type="number" min="5" max="86400" placeholder="z ustawień" /></label>
         <label class="check"><input name="enabled" type="checkbox" checked /> Aktywny</label>
         <div id="tcpOptions" class="nested type-options">
           <label>Host/IP<input name="tcp_host" placeholder="192.168.1.10" /></label>
@@ -354,7 +355,6 @@
           <label>Topic<input name="topic" placeholder="home/status" /></label>
           <label>Timeout topicu s<input name="topic_timeout_seconds" type="number" min="1" /></label>
         </div>
-        <label>Timeout min<input name="timeout_minutes" type="number" min="0.01" step="0.01" /></label>
         <label class="check"><input name="test_on_save" type="checkbox" checked /> Testuj przy zapisie</label>
         <div id="monitorTestResult" class="test-result hidden" role="status"></div>
         <menu>
@@ -394,6 +394,6 @@
     </dialog>
 
     <div id="toast" role="status" aria-label="Komunikat aplikacji" title="Kliknij, aby zamknąć"></div>
-    <script src="static/app.js?v=0.5.5"></script>
+    <script src="static/app.js?v=0.5.6"></script>
   </body>
 </html>

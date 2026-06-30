@@ -1,7 +1,7 @@
 ARG BUILD_ARCH=amd64
 FROM ghcr.io/home-assistant/${BUILD_ARCH}-base-python:3.13-alpine3.24
 
-ARG BUILD_VERSION=0.5.5
+ARG BUILD_VERSION=0.5.6
 ARG BUILD_ARCH=amd64
 ARG BUILD_REVISION=local
 

@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import os
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
-from typing import Any
+from typing import Any, AsyncIterator
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, Query
@@ -26,23 +27,27 @@ migrate(db)
 ha = HomeAssistantClient(config)
 service = MonitorService(db, config, ha)
 
-app = FastAPI(title="Monitoring Center", version=__version__)
-static_path = Path(__file__).resolve().parent.parent / "static"
 scheduler_task: asyncio.Task[Any] | None = None
 
 
-@app.on_event("startup")
-async def startup() -> None:
+@asynccontextmanager
+async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     global scheduler_task
     scheduler_task = asyncio.create_task(service.scheduler())
+    try:
+        yield
+    finally:
+        service.stop()
+        if scheduler_task:
+            scheduler_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await scheduler_task
+        scheduler_task = None
+        db.close()
 
 
-@app.on_event("shutdown")
-async def shutdown() -> None:
-    service.stop()
-    if scheduler_task:
-        scheduler_task.cancel()
-    db.close()
+app = FastAPI(title="Monitoring Center", version=__version__, lifespan=lifespan)
+static_path = Path(__file__).resolve().parent.parent / "static"
 
 
 @app.get("/health")

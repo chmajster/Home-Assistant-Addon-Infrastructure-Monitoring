@@ -64,8 +64,7 @@ Opcje startowe są w `config.yaml`, a przykładowy plik znajduje się w `options
 Najważniejsze opcje:
 
 - `retention_days` - retencja historii,
-- `default_device_interval` - domyślny interwał ping,
-- `default_website_interval` - domyślny interwał HTTP,
+- `default_interval_seconds` - domyślny interwał nowych monitorów w sekundach,
 - `default_timeout_minutes` - domyślny timeout monitorów w minutach,
 - `max_page_size_mb` - limit pobieranej strony w MB,
 - `block_private_networks` - ochrona SSRF dla monitoringu URL,
@@ -125,9 +124,7 @@ Ping hosta:
   "name": "Router",
   "target": "192.168.1.1",
   "interval_seconds": 60,
-  "config": {
-    "timeout_minutes": 0.05
-  }
+  "config": {}
 }
 ```
 
@@ -141,8 +138,7 @@ Port TCP:
   "interval_seconds": 60,
   "config": {
     "host": "192.168.1.40",
-    "port": 8123,
-    "timeout_minutes": 0.0833
+    "port": 8123
   }
 }
 ```
@@ -159,8 +155,7 @@ Monitor WWW - status i hash:
     "expected_status_codes": [200],
     "css_selector": "main",
     "ignore_patterns": ["\\\\d{4}-\\\\d{2}-\\\\d{2}"],
-    "max_page_size_mb": 5,
-    "timeout_minutes": 5
+    "max_page_size_mb": 5
   }
 }
 ```
@@ -177,8 +172,7 @@ Certyfikat SSL:
     "host": "example.com",
     "port": 443,
     "warning_days": 30,
-    "error_days": 7,
-    "timeout_minutes": 0.0833
+    "error_days": 7
   }
 }
 ```
@@ -192,8 +186,7 @@ Encja Home Assistant:
   "target": "sensor.salon_temperature",
   "interval_seconds": 60,
   "config": {
-    "alert_states": ["unavailable", "unknown", "off"],
-    "timeout_minutes": 0.0833
+    "alert_states": ["unavailable", "unknown", "off"]
   }
 }
 ```

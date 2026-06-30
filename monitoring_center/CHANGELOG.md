@@ -2,6 +2,15 @@
 
 All notable changes to the **Monitoring Center** Home Assistant add-on are documented here.
 
+## [0.5.6] - 2026-06-30
+
+### Changed
+
+- Monitor timeout is now global and configured in Settings, with no per-monitor timeout field.
+- Added global `default_interval_seconds` setting as the default interval for new monitors.
+- Added `SCHEMA_VERSION = 7` migration to remove per-monitor timeout config and fold legacy interval settings into `default_interval_seconds`.
+- Bumped add-on and application metadata version to `0.5.6`.
+
 ## [0.5.5] - 2026-06-30
 
 ### Added

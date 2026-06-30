@@ -61,15 +61,12 @@ def positive_float(value: Any, default: float, minimum: float = 0.1, maximum: fl
 
 
 def timeout_seconds_from_config(config: dict[str, Any], default_seconds: float, minimum: float = 1.0) -> float:
-    if config.get("timeout_minutes") not in (None, ""):
-        return positive_float(config.get("timeout_minutes"), default_seconds / 60, minimum / 60, None) * 60
-    return positive_float(config.get("timeout_seconds"), default_seconds, minimum, None)
+    return positive_float(default_seconds, default_seconds, minimum, None)
 
 
 def normalize_timeout_config(config: dict[str, Any], default_seconds: float, minimum: float = 1.0) -> None:
-    timeout_seconds = timeout_seconds_from_config(config, default_seconds, minimum)
     config.pop("timeout_seconds", None)
-    config["timeout_minutes"] = timeout_seconds / 60
+    config.pop("timeout_minutes", None)
 
 
 def csv_ints(value: Any, default: list[int]) -> list[int]:

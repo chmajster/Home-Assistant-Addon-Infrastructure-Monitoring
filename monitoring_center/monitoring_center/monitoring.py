@@ -516,6 +516,7 @@ class MonitorService:
     def get_settings(self) -> dict[str, Any]:
         settings = {
             "retention_days": self.config.retention_days,
+            "default_interval_seconds": self.config.default_interval_seconds,
             "default_timeout_minutes": self.config.default_timeout_minutes,
             "max_page_size_mb": self.config.max_page_size_mb,
             "block_private_networks": self.config.block_private_networks,
@@ -530,10 +531,16 @@ class MonitorService:
         if "default_timeout_minutes" not in persisted_keys:
             timeout_seconds = settings.get("request_timeout_seconds", settings.get("ping_timeout_seconds", 300))
             settings["default_timeout_minutes"] = max(_safe_float(timeout_seconds, 300) / 60, 1 / 60)
+        if "default_interval_seconds" not in persisted_keys:
+            settings["default_interval_seconds"] = int(
+                settings.get("default_website_interval", settings.get("default_device_interval", 300))
+            )
         if "max_page_size_mb" not in persisted_keys:
             settings["max_page_size_mb"] = max(_safe_float(settings.get("max_page_size_kb", 512), 512) / 1024, 1 / 1024)
         settings.pop("request_timeout_seconds", None)
         settings.pop("ping_timeout_seconds", None)
+        settings.pop("default_device_interval", None)
+        settings.pop("default_website_interval", None)
         settings.pop("max_page_size_kb", None)
         return settings
 
@@ -603,6 +610,12 @@ class MonitorService:
                 normalized["default_timeout_minutes"] = max(_safe_float(timeout_seconds, 300) / 60, 1 / 60)
         normalized.pop("request_timeout_seconds", None)
         normalized.pop("ping_timeout_seconds", None)
+        if "default_interval_seconds" not in normalized:
+            normalized["default_interval_seconds"] = int(
+                normalized.pop("default_website_interval", normalized.pop("default_device_interval", 300))
+            )
+        normalized.pop("default_device_interval", None)
+        normalized.pop("default_website_interval", None)
 
         if "max_page_size_mb" not in normalized:
             max_page_size_kb = normalized.pop("max_page_size_kb", None)
@@ -677,7 +690,7 @@ class MonitorService:
             "type": monitor_type,
             "name": payload["name"].strip(),
             "target": target,
-            "interval_seconds": int(payload.get("interval_seconds") or plugin.default_interval),
+            "interval_seconds": int(payload.get("interval_seconds") or self.get_settings()["default_interval_seconds"]),
             "group_id": payload.get("group_id"),
             "enabled": bool(payload.get("enabled", True)),
             "config": config,

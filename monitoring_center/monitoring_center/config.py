@@ -12,6 +12,7 @@ DEFAULT_OPTIONS: dict[str, Any] = {
     "database_path": "/data/monitoring_center.db",
     "log_file": "/data/monitoring_center.log",
     "retention_days": 30,
+    "default_interval_seconds": 300,
     "default_device_interval": 60,
     "default_website_interval": 300,
     "default_timeout_minutes": 5,
@@ -29,6 +30,7 @@ class AppConfig:
     database_path: Path
     log_file: Path
     retention_days: int
+    default_interval_seconds: int
     default_device_interval: int
     default_website_interval: int
     default_timeout_minutes: float
@@ -54,6 +56,8 @@ class AppConfig:
         if "default_timeout_minutes" not in loaded:
             timeout_seconds = data.get("request_timeout_seconds", data.get("ping_timeout_seconds", 300))
             data["default_timeout_minutes"] = max(_safe_float(timeout_seconds, 300) / 60, 1 / 60)
+        if "default_interval_seconds" not in loaded:
+            data["default_interval_seconds"] = int(data.get("default_website_interval", data.get("default_device_interval", 300)))
         if "max_page_size_mb" not in loaded:
             data["max_page_size_mb"] = max(_safe_float(data.get("max_page_size_kb", 512), 512) / 1024, 1 / 1024)
 
@@ -62,6 +66,7 @@ class AppConfig:
             database_path=Path(str(data["database_path"])),
             log_file=Path(str(data["log_file"])),
             retention_days=int(data["retention_days"]),
+            default_interval_seconds=int(data["default_interval_seconds"]),
             default_device_interval=int(data["default_device_interval"]),
             default_website_interval=int(data["default_website_interval"]),
             default_timeout_minutes=float(data["default_timeout_minutes"]),

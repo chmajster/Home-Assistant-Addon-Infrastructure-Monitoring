@@ -51,6 +51,7 @@ class MaintenanceIn(BaseModel):
 
 class SettingsIn(BaseModel):
     retention_days: int = Field(ge=1, le=3650)
+    default_interval_seconds: int = Field(ge=5, le=86400)
     default_timeout_minutes: float = Field(gt=0)
     max_page_size_mb: float = Field(gt=0)
     block_private_networks: bool

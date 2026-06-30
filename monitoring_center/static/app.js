@@ -817,7 +817,7 @@ function monitorSettingsRows(monitor) {
     "Grupa": monitor.group_name || "Bez grupy",
     "Aktywny": monitor.enabled ? "tak" : "nie",
     "Interwał": `${monitor.interval_seconds}s`,
-    "Timeout": getTimeoutMinutes(config) ? `${getTimeoutMinutes(config)} min` : `${state.settings?.default_timeout_minutes ?? "-"} min`,
+    "Timeout globalny": `${state.settings?.default_timeout_minutes ?? "-"} min`,
     "Serwis": monitor.maintenance_active ? `aktywny do ${formatDate(monitor.maintenance_until || monitor.group_maintenance_until)}` : "-",
     "Retencja historii": `${state.settings?.retention_days ?? "-"} dni`,
     "Blokada prywatnych URL": state.settings?.block_private_networks ? "tak" : "nie",
@@ -1207,7 +1207,6 @@ function openMonitorForm(monitor) {
   form.elements.interval_seconds.value = monitor.interval_seconds || "";
   form.elements.enabled.checked = monitor.enabled !== false;
   form.elements.test_on_save.checked = !monitor.id;
-  form.elements.timeout_minutes.value = getTimeoutMinutes(monitor.config);
   form.elements.expected_status_codes.value = (monitor.config?.expected_status_codes || []).join(",");
   form.elements.tcp_host.value = monitor.config?.host || "";
   form.elements.tcp_port.value = monitor.config?.port || "";
@@ -1253,7 +1252,6 @@ async function saveMonitor(event) {
 function buildMonitorPayload(form) {
   const type = form.elements.type.value;
   const config = buildMonitorConfig(form, type);
-  if (form.elements.timeout_minutes.value) config.timeout_minutes = Number(form.elements.timeout_minutes.value);
   return {
     type,
     name: form.elements.name.value.trim(),
@@ -1382,6 +1380,9 @@ function renderSettings() {
   if (state.settings.default_timeout_minutes === undefined && state.settings.request_timeout_seconds !== undefined) {
     state.settings.default_timeout_minutes = Number(state.settings.request_timeout_seconds) / 60;
   }
+  if (state.settings.default_interval_seconds === undefined) {
+    state.settings.default_interval_seconds = Number(state.settings.default_website_interval || state.settings.default_device_interval || 300);
+  }
   if (state.settings.max_page_size_mb === undefined && state.settings.max_page_size_kb !== undefined) {
     state.settings.max_page_size_mb = Number(state.settings.max_page_size_kb) / 1024;
   }
@@ -1397,6 +1398,7 @@ async function saveSettings(event) {
   const form = event.currentTarget;
   const payload = {
     retention_days: Number(form.elements.retention_days.value),
+    default_interval_seconds: Number(form.elements.default_interval_seconds.value),
     default_timeout_minutes: Number(form.elements.default_timeout_minutes.value),
     max_page_size_mb: Number(form.elements.max_page_size_mb.value),
     block_private_networks: form.elements.block_private_networks.checked,
@@ -1451,11 +1453,16 @@ function normalizeImportedSettings(settings) {
   if (normalized.default_timeout_minutes === undefined && normalized.request_timeout_seconds !== undefined) {
     normalized.default_timeout_minutes = Number(normalized.request_timeout_seconds) / 60;
   }
+  if (normalized.default_interval_seconds === undefined) {
+    normalized.default_interval_seconds = Number(normalized.default_website_interval || normalized.default_device_interval || 300);
+  }
   if (normalized.max_page_size_mb === undefined && normalized.max_page_size_kb !== undefined) {
     normalized.max_page_size_mb = Number(normalized.max_page_size_kb) / 1024;
   }
   delete normalized.request_timeout_seconds;
   delete normalized.ping_timeout_seconds;
+  delete normalized.default_device_interval;
+  delete normalized.default_website_interval;
   delete normalized.max_page_size_kb;
   return normalized;
 }

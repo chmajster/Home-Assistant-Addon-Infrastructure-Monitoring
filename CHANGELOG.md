@@ -4,6 +4,15 @@ Wszystkie istotne zmiany w projekcie **Home Assistant Monitoring / Monitoring Ce
 
 Format opiera się na konwencji Keep a Changelog, a wersjonowanie dodatku powinno podążać za SemVer tam, gdzie ma to zastosowanie.
 
+## [0.5.6] - 2026-06-30
+
+### Changed
+
+- Timeout monitorow jest teraz globalny i ustawiany w `Ustawieniach`, bez pola timeoutu na pojedynczym monitorze.
+- Dodano globalny `default_interval_seconds` w ustawieniach jako domyslny interwal nowych monitorow.
+- Dodano migracje `SCHEMA_VERSION = 7`, ktora usuwa per-monitor timeout z konfiguracji monitorow i przenosi stare ustawienia interwalu do `default_interval_seconds`.
+- Podniesiono wersje dodatku i metadanych aplikacji do `0.5.6`.
+
 ## [0.5.5] - 2026-06-30
 
 ### Added

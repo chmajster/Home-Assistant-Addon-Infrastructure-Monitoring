@@ -1,5 +1,5 @@
 name: Monitoring Center
-version: "0.5.5"
+version: "0.5.6"
 slug: monitoring_center
 description: Local network and website monitoring center for Home Assistant
 url: https://github.com/chmajster/Home-Assistant-Monitoring
@@ -25,8 +25,7 @@ options:
   database_path: /data/monitoring_center.db
   log_file: /data/monitoring_center.log
   retention_days: 30
-  default_device_interval: 60
-  default_website_interval: 300
+  default_interval_seconds: 300
   default_timeout_minutes: 5
   max_page_size_mb: 5
   block_private_networks: false
@@ -38,8 +37,7 @@ schema:
   database_path: str
   log_file: str
   retention_days: int(1,3650)
-  default_device_interval: int(5,86400)
-  default_website_interval: int(10,86400)
+  default_interval_seconds: int(5,86400)
   default_timeout_minutes: float(0,)
   max_page_size_mb: float(0,)
   block_private_networks: bool

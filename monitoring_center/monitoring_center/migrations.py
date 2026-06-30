@@ -5,7 +5,7 @@ import shutil
 from .database import Database, dumps_json, loads_json
 
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 
 def migrate(db: Database) -> None:
@@ -40,6 +40,9 @@ def migrate(db: Database) -> None:
     if version < 6:
         _migration_006(db)
         db.execute("INSERT INTO schema_migrations(version) VALUES (?)", (6,))
+    if version < 7:
+        _migration_007(db)
+        db.execute("INSERT INTO schema_migrations(version) VALUES (?)", (7,))
 
 
 def _backup_database(db: Database) -> None:
@@ -299,3 +302,31 @@ def _migration_005(db: Database) -> None:
 
 def _migration_006(db: Database) -> None:
     db.execute("UPDATE monitors SET type = 'http_hash', updated_at = datetime('now') WHERE type IN ('website', 'www')")
+
+
+def _migration_007(db: Database) -> None:
+    settings = {
+        row["key"]: loads_json(row["value"], row["value"])
+        for row in db.fetchall("SELECT key, value FROM settings")
+    }
+    if "default_interval_seconds" not in settings:
+        interval = settings.get("default_website_interval", settings.get("default_device_interval", 300))
+        db.execute(
+            """
+            INSERT INTO settings(key, value, updated_at) VALUES ('default_interval_seconds', ?, datetime('now'))
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')
+            """,
+            (dumps_json(max(int(_safe_float(interval, 300)), 5)),),
+        )
+    db.execute("DELETE FROM settings WHERE key IN ('default_device_interval', 'default_website_interval')")
+
+    for row in db.fetchall("SELECT id, config_json FROM monitors"):
+        config = loads_json(row.get("config_json"), {})
+        if "timeout_minutes" not in config and "timeout_seconds" not in config:
+            continue
+        config.pop("timeout_minutes", None)
+        config.pop("timeout_seconds", None)
+        db.execute(
+            "UPDATE monitors SET config_json = ?, updated_at = datetime('now') WHERE id = ?",
+            (dumps_json(config), row["id"]),
+        )
