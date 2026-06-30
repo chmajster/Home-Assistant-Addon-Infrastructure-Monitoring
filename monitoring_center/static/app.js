@@ -1434,11 +1434,14 @@ async function importConfig(event) {
     });
     importedGroups[savedGroup.name] = savedGroup.id;
   }
-  for (const monitor of data.monitors || []) {
+  const monitors = (data.monitors || []).map((monitor) => {
     const mappedGroupId = monitor.group_name ? importedGroups[monitor.group_name] : monitor.group_id;
-    await api("/api/monitors", {
+    return { ...monitor, group_id: mappedGroupId || null, test_on_save: false };
+  });
+  if (monitors.length) {
+    await api("/api/monitors/import", {
       method: "POST",
-      body: JSON.stringify({ ...monitor, group_id: mappedGroupId || null, test_on_save: false }),
+      body: JSON.stringify({ monitors }),
     });
   }
   toast("Import zakończony.");

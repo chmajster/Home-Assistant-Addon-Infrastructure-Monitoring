@@ -1,8 +1,8 @@
 name: Monitoring Center
-version: "0.5.3"
+version: "0.5.4"
 slug: monitoring_center
 description: Local network and website monitoring center for Home Assistant
-url: https://github.com/local/home-assistant-monitoring
+url: https://github.com/chmajster/Home-Assistant-Monitoring
 arch:
   - aarch64
   - amd64

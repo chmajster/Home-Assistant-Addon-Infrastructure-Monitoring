@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import shutil
+
 from .database import Database, dumps_json, loads_json
 
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 
 def migrate(db: Database) -> None:
@@ -18,6 +20,8 @@ def migrate(db: Database) -> None:
 
     current = db.fetchone("SELECT MAX(version) AS version FROM schema_migrations")
     version = int(current["version"] or 0) if current else 0
+    if 0 < version < SCHEMA_VERSION:
+        _backup_database(db)
     if version < 1:
         _migration_001(db)
         db.execute("INSERT INTO schema_migrations(version) VALUES (?)", (1,))
@@ -30,6 +34,19 @@ def migrate(db: Database) -> None:
     if version < 4:
         _migration_004(db)
         db.execute("INSERT INTO schema_migrations(version) VALUES (?)", (4,))
+    if version < 5:
+        _migration_005(db)
+        db.execute("INSERT INTO schema_migrations(version) VALUES (?)", (5,))
+
+
+def _backup_database(db: Database) -> None:
+    if not db.path.exists() or db.path.stat().st_size == 0:
+        return
+    db.fetchone("PRAGMA wal_checkpoint(FULL)")
+    backup_path = db.path.with_suffix(f"{db.path.suffix}.bak")
+    if backup_path.exists():
+        return
+    shutil.copy2(db.path, backup_path)
 
 
 def _migration_001(db: Database) -> None:
@@ -256,3 +273,22 @@ def _safe_float(value: object, default: float) -> float:
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+def _migration_005(db: Database) -> None:
+    db.executescript(
+        """
+        CREATE INDEX IF NOT EXISTS idx_checks_time
+            ON monitor_checks(checked_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_checks_status_time
+            ON monitor_checks(status, checked_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_checks_changed_time
+            ON monitor_checks(content_changed, checked_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_events_type_time
+            ON events(event_type, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_monitors_status
+            ON monitors(status);
+        CREATE INDEX IF NOT EXISTS idx_monitors_enabled_type
+            ON monitors(enabled, type);
+        """
+    )

@@ -4,6 +4,20 @@ Wszystkie istotne zmiany w projekcie **Home Assistant Monitoring / Monitoring Ce
 
 Format opiera się na konwencji Keep a Changelog, a wersjonowanie dodatku powinno podążać za SemVer tam, gdzie ma to zastosowanie.
 
+## [0.5.4] - 2026-06-30
+
+### Added
+
+- Dodano wspolne zrodlo wersji aplikacji w `monitoring_center.__version__`.
+- Dodano endpoint `/ready` oraz rozszerzony endpoint `/api/diagnostics/full` z wersja, schematem bazy i statystykami SQLite.
+- Dodano pragmy SQLite, bezpieczniejsze transakcje, transakcyjny import monitorow, kopie zapasowa bazy przed migracja oraz indeksy przyspieszajace historie i diagnostyke.
+- Dodano `.gitignore`, `.dockerignore`, `.editorconfig` i bazowa konfiguracje narzedzi w `pyproject.toml`.
+
+### Changed
+
+- Ustawiono metadane repozytorium i add-onu na `https://github.com/chmajster/Home-Assistant-Monitoring`.
+- Podniesiono wersje dodatku i metadanych aplikacji do `0.5.4`.
+
 ## [0.5.3] - 2026-06-30
 
 ### Fixed

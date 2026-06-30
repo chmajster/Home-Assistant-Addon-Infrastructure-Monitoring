@@ -10,13 +10,14 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
+from . import __version__
 from .config import AppConfig
 from .database import Database
 from .ha import HomeAssistantClient
 from .logging_config import configure_logging
 from .migrations import migrate
 from .monitoring import MonitorService
-from .schemas import GroupIn, GroupUpdate, MaintenanceIn, MonitorIn, MonitorUpdate, SettingsIn
+from .schemas import GroupIn, GroupUpdate, MaintenanceIn, MonitorIn, MonitorsImportIn, MonitorUpdate, SettingsIn
 
 config = AppConfig.load()
 configure_logging(config.log_level, config.log_file)
@@ -25,7 +26,7 @@ migrate(db)
 ha = HomeAssistantClient(config)
 service = MonitorService(db, config, ha)
 
-app = FastAPI(title="Monitoring Center", version="0.5.3")
+app = FastAPI(title="Monitoring Center", version=__version__)
 static_path = Path(__file__).resolve().parent.parent / "static"
 scheduler_task: asyncio.Task[Any] | None = None
 
@@ -47,6 +48,21 @@ async def shutdown() -> None:
 @app.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/ready")
+async def ready() -> dict[str, Any]:
+    diagnostics = service.diagnostics()
+    data_dir = config.database_path.parent
+    writable = os.access(data_dir, os.W_OK)
+    scheduler_running = scheduler_task is not None and not scheduler_task.done()
+    return {
+        "status": "ready" if diagnostics["database_exists"] and writable and scheduler_running else "not_ready",
+        "database": diagnostics["database_exists"],
+        "data_dir_writable": writable,
+        "scheduler": scheduler_running,
+        "schema_version": diagnostics.get("schema_version"),
+    }
 
 
 @app.get("/api/summary")
@@ -122,6 +138,12 @@ async def create_monitor(payload: MonitorIn) -> dict[str, Any]:
 @app.post("/api/monitors/test")
 async def test_monitor(payload: MonitorIn) -> dict[str, Any]:
     return await service.test_monitor(payload.model_dump())
+
+
+@app.post("/api/monitors/import")
+async def import_monitors(payload: MonitorsImportIn) -> dict[str, Any]:
+    monitors = await service.create_monitors_bulk([monitor.model_dump() for monitor in payload.monitors])
+    return {"created": len(monitors), "monitors": monitors}
 
 
 @app.put("/api/monitors/{monitor_id}")
@@ -216,6 +238,13 @@ async def update_settings(payload: SettingsIn) -> dict[str, Any]:
 @app.get("/api/diagnostics")
 async def diagnostics() -> dict[str, Any]:
     return service.diagnostics()
+
+
+@app.get("/api/diagnostics/full")
+async def diagnostics_full() -> dict[str, Any]:
+    data = service.diagnostics()
+    data["ready"] = await ready()
+    return data
 
 
 @app.get("/api/logs", response_class=PlainTextResponse)

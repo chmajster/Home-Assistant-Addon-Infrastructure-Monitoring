@@ -2,6 +2,20 @@
 
 All notable changes to the **Monitoring Center** Home Assistant add-on are documented here.
 
+## [0.5.4] - 2026-06-30
+
+### Added
+
+- Added a shared application version source in `monitoring_center.__version__`.
+- Added `/ready` and extended `/api/diagnostics/full` diagnostics with app version, schema version, and SQLite statistics.
+- Added SQLite pragmas, safer transaction handling, transactional monitor import, a database backup before migrations, and indexes for history and diagnostics queries.
+- Added repository tooling files: `.gitignore`, `.dockerignore`, `.editorconfig`, and `pyproject.toml`.
+
+### Changed
+
+- Updated repository and add-on metadata to `https://github.com/chmajster/Home-Assistant-Monitoring`.
+- Bumped add-on and application metadata version to `0.5.4`.
+
 ## [0.5.3] - 2026-06-30
 
 ### Fixed

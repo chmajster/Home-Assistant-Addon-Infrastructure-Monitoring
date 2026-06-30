@@ -1,0 +1,16 @@
+[tool.ruff]
+line-length = 120
+target-version = "py313"
+src = ["monitoring_center"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["monitoring_center"]
+
+[tool.mypy]
+python_version = "3.13"
+ignore_missing_imports = true
+check_untyped_defs = true

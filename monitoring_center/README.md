@@ -15,7 +15,7 @@ Monitoring Center to lokalny dodatek Home Assistant do monitorowania urządzeń 
 - wykrywanie zmian HTML, selektor CSS, ignorowane regexy dla dynamicznych fragmentów,
 - historia sprawdzeń z filtrami po monitorze, typie, statusie i dacie,
 - retencja danych i czyszczenie starej historii,
-- dashboard, zakładki Urządzenia, Strony WWW, Historia, Ustawienia i Diagnostyka,
+- dashboard oraz zakładki Monitory, Grupy, Historia, Ustawienia i Diagnostyka,
 - publikowanie encji `binary_sensor` oraz `sensor` do Home Assistant,
 - eventy `monitor_online`, `monitor_offline`, `website_changed`, `website_error`,
 - eventy typów monitorów, np. `website_hash_changed`, `ssl_certificate_expiring`, `dns_record_changed`,

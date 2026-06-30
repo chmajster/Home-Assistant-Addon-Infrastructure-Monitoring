@@ -1,15 +1,20 @@
 ARG BUILD_ARCH=amd64
 FROM ghcr.io/home-assistant/${BUILD_ARCH}-base-python:3.13-alpine3.24
 
-ARG BUILD_VERSION=0.5.3
+ARG BUILD_VERSION=0.5.4
 ARG BUILD_ARCH=amd64
+ARG BUILD_REVISION=local
 
 LABEL \
   io.hass.name="Monitoring Center" \
   io.hass.description="Local network and website monitoring center for Home Assistant" \
   io.hass.version="${BUILD_VERSION}" \
   io.hass.type="app" \
-  io.hass.arch="${BUILD_ARCH}"
+  io.hass.arch="${BUILD_ARCH}" \
+  org.opencontainers.image.source="https://github.com/chmajster/Home-Assistant-Monitoring" \
+  org.opencontainers.image.revision="${BUILD_REVISION}" \
+  org.opencontainers.image.version="${BUILD_VERSION}" \
+  org.opencontainers.image.description="Local network and website monitoring center for Home Assistant"
 
 WORKDIR /app
 

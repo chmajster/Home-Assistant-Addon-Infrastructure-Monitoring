@@ -27,6 +27,10 @@ class MonitorUpdate(BaseModel):
     test_on_save: bool = False
 
 
+class MonitorsImportIn(BaseModel):
+    monitors: list[MonitorIn] = Field(default_factory=list, max_length=1000)
+
+
 class GroupIn(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     description: str | None = Field(default=None, max_length=500)

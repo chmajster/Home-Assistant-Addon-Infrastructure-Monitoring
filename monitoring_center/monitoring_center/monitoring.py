@@ -3,12 +3,14 @@ from __future__ import annotations
 import asyncio
 import difflib
 import logging
+import sys
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import HTTPException
 
+from . import __version__
 from .config import AppConfig
 from .database import Database, dumps_json, loads_json
 from .ha import HomeAssistantClient
@@ -45,6 +47,7 @@ class MonitorService:
         self.running: set[int] = set()
         self._stop = asyncio.Event()
         self._last_started: dict[int, float] = {}
+        self.started_at = utc_now()
         self._apply_persisted_settings()
 
     async def scheduler(self) -> None:
@@ -155,26 +158,21 @@ class MonitorService:
     async def create_monitor(self, payload: dict[str, Any]) -> dict[str, Any]:
         monitor = self._normalize_payload(payload)
         self._ensure_unique_url_monitor(monitor)
-        cursor = self.db.execute(
-            """
-            INSERT INTO monitors(type, name, target, interval_seconds, group_id, enabled, config_json)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                monitor["type"],
-                monitor["name"],
-                monitor["target"],
-                monitor["interval_seconds"],
-                monitor["group_id"],
-                int(monitor["enabled"]),
-                dumps_json(monitor["config"]),
-            ),
-        )
-        created = self.get_monitor(int(cursor.lastrowid))
+        monitor_id = self._insert_monitor(monitor)
+        created = self.get_monitor(monitor_id)
         if payload.get("test_on_save", True):
             await self.run_check(int(created["id"]))
             created = self.get_monitor(int(created["id"]))
         return created
+
+    async def create_monitors_bulk(self, payloads: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        created_ids: list[int] = []
+        with self.db.transaction():
+            for payload in payloads:
+                monitor = self._normalize_payload({**payload, "test_on_save": False})
+                self._ensure_unique_url_monitor(monitor)
+                created_ids.append(self._insert_monitor(monitor))
+        return [self.get_monitor(monitor_id) for monitor_id in created_ids]
 
     async def update_monitor(self, monitor_id: int, payload: dict[str, Any]) -> dict[str, Any]:
         current = self.get_monitor(monitor_id)
@@ -626,6 +624,8 @@ class MonitorService:
 
     def diagnostics(self) -> dict[str, Any]:
         last_check = self.db.fetchone("SELECT MAX(checked_at) AS checked_at FROM monitor_checks")
+        schema = self.db.fetchone("SELECT MAX(version) AS version FROM schema_migrations")
+        db_stats = self.db.diagnostics()
         errors = self.db.fetchall(
             """
             SELECT checked_at, monitor_id, error
@@ -636,12 +636,13 @@ class MonitorService:
             """
         )
         return {
-            "version": "0.5.3",
+            "version": __version__,
+            "python_version": sys.version.split()[0],
+            "started_at": self.started_at,
             "database_path": str(self.config.database_path),
             "database_exists": self.config.database_path.exists(),
-            "database_size_bytes": self.config.database_path.stat().st_size if self.config.database_path.exists() else 0,
-            "monitor_count": self.db.fetchone("SELECT COUNT(*) AS count FROM monitors")["count"],
-            "group_count": self.db.fetchone("SELECT COUNT(*) AS count FROM monitor_groups")["count"],
+            "schema_version": int(schema["version"] or 0) if schema else 0,
+            **db_stats,
             "last_check": last_check["checked_at"] if last_check else None,
             "running_jobs": sorted(self.running),
             "intervals": {m["id"]: m["interval_seconds"] for m in self.list_monitors()},
@@ -670,6 +671,24 @@ class MonitorService:
             "enabled": bool(payload.get("enabled", True)),
             "config": config,
         }
+
+    def _insert_monitor(self, monitor: dict[str, Any]) -> int:
+        cursor = self.db.execute(
+            """
+            INSERT INTO monitors(type, name, target, interval_seconds, group_id, enabled, config_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                monitor["type"],
+                monitor["name"],
+                monitor["target"],
+                monitor["interval_seconds"],
+                monitor["group_id"],
+                int(monitor["enabled"]),
+                dumps_json(monitor["config"]),
+            ),
+        )
+        return int(cursor.lastrowid)
 
     @staticmethod
     def _normalize_monitor_config(config: dict[str, Any]) -> dict[str, Any]:
