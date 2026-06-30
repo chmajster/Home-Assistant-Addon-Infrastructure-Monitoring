@@ -232,8 +232,19 @@ class MonitorService:
         }
 
     def delete_monitor(self, monitor_id: int) -> None:
+        self.get_monitor(monitor_id)
         self.db.execute("DELETE FROM monitors WHERE id = ?", (monitor_id,))
         self._last_started.pop(monitor_id, None)
+
+    def set_monitor_enabled(self, monitor_id: int, enabled: bool) -> dict[str, Any]:
+        self.get_monitor(monitor_id)
+        self.db.execute(
+            "UPDATE monitors SET enabled = ?, updated_at = datetime('now') WHERE id = ?",
+            (int(enabled), monitor_id),
+        )
+        if not enabled:
+            self._last_started.pop(monitor_id, None)
+        return self.get_monitor(monitor_id)
 
     async def run_check(self, monitor_id: int) -> dict[str, Any]:
         if monitor_id in self.running:

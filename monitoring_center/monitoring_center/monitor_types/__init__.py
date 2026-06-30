@@ -30,6 +30,7 @@ PLUGINS: dict[str, MonitorTypePlugin] = {
 
 LEGACY_TYPE_MAP = {
     "device": "ping_host",
+    "www": "http_hash",
     "website": "http_hash",
 }
 

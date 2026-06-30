@@ -4,6 +4,20 @@ Wszystkie istotne zmiany w projekcie **Home Assistant Monitoring / Monitoring Ce
 
 Format opiera się na konwencji Keep a Changelog, a wersjonowanie dodatku powinno podążać za SemVer tam, gdzie ma to zastosowanie.
 
+## [0.5.5] - 2026-06-30
+
+### Added
+
+- Dodano zgodne endpointy `GET /api/monitors/{id}`, `POST /api/monitors/{id}/enable` i `POST /api/monitors/{id}/disable`.
+- Dodano alias typu `www` mapowany na wspolny checker `http_hash`.
+- Dodano migracje `SCHEMA_VERSION = 6`, ktora przenosi stare typy `www`/`website` do wspolnego checkera WWW.
+
+### Changed
+
+- Zmieniono etykiety UI na ogolny widok `Monitoring` oraz etykiety typow WWW w formularzu monitorow.
+- Przelaczanie monitora w UI korzysta teraz ze wspolnych endpointow enable/disable.
+- Podniesiono wersje dodatku i metadanych aplikacji do `0.5.5`.
+
 ## [0.5.4] - 2026-06-30
 
 ### Added

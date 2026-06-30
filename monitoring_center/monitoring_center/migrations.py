@@ -5,7 +5,7 @@ import shutil
 from .database import Database, dumps_json, loads_json
 
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 
 def migrate(db: Database) -> None:
@@ -37,6 +37,9 @@ def migrate(db: Database) -> None:
     if version < 5:
         _migration_005(db)
         db.execute("INSERT INTO schema_migrations(version) VALUES (?)", (5,))
+    if version < 6:
+        _migration_006(db)
+        db.execute("INSERT INTO schema_migrations(version) VALUES (?)", (6,))
 
 
 def _backup_database(db: Database) -> None:
@@ -292,3 +295,7 @@ def _migration_005(db: Database) -> None:
             ON monitors(enabled, type);
         """
     )
+
+
+def _migration_006(db: Database) -> None:
+    db.execute("UPDATE monitors SET type = 'http_hash', updated_at = datetime('now') WHERE type IN ('website', 'www')")

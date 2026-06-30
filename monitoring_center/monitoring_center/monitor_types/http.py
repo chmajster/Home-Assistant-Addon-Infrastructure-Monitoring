@@ -18,7 +18,7 @@ LOGGER = logging.getLogger(__name__)
 
 class HttpStatusMonitor:
     type = "http_status"
-    label = "HTTP/HTTPS status"
+    label = "WWW - status HTTP/HTTPS"
     category = "website"
     default_interval = 300
 
@@ -33,7 +33,7 @@ class HttpStatusMonitor:
 
 class HttpHashMonitor:
     type = "http_hash"
-    label = "HTTP/HTTPS hash zawartosci"
+    label = "WWW - hash zawartosci"
     category = "website"
     default_interval = 300
 

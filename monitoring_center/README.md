@@ -1,6 +1,6 @@
 # Monitoring Center
 
-Monitoring Center to lokalny dodatek Home Assistant do monitorowania urządzeń w sieci i stron WWW. Działa bez chmury, używa własnej bazy SQLite w `/data` i udostępnia panel przez Ingress w sidebarze Home Assistant.
+Monitoring Center to lokalny dodatek Home Assistant do wspólnego monitorowania urządzeń, usług i stron WWW. Monitoring WWW jest typem monitora w tym samym widoku `Monitoring`, korzysta z tej samej historii i tych samych akcji co pozostałe monitory. Dodatek działa bez chmury, używa własnej bazy SQLite w `/data` i udostępnia panel przez Ingress w sidebarze Home Assistant.
 
 ## Funkcje
 
@@ -11,7 +11,7 @@ Monitoring Center to lokalny dodatek Home Assistant do monitorowania urządzeń 
 - SLO / uptime dla 24h, 7 dni, 30 dni i 90 dni,
 - monitoring portów TCP, DNS, SSL, REST API, encji Home Assistant i MQTT,
 - status online/offline, czas odpowiedzi, utrata pakietów i historia dostępności,
-- monitorowanie URL przez HTTP/HTTPS, kod HTTP, czas odpowiedzi i hash treści,
+- monitorowanie WWW jako typu monitora przez HTTP/HTTPS, kod HTTP, czas odpowiedzi i hash treści,
 - wykrywanie zmian HTML, selektor CSS, ignorowane regexy dla dynamicznych fragmentów,
 - historia sprawdzeń z filtrami po monitorze, typie, statusie i dacie,
 - retencja danych i czyszczenie starej historii,
@@ -147,7 +147,7 @@ Port TCP:
 }
 ```
 
-Hash strony WWW:
+Monitor WWW - status i hash:
 
 ```json
 {

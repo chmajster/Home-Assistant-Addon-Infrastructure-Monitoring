@@ -80,6 +80,14 @@ async def monitors() -> list[dict[str, Any]]:
     return service.list_monitors()
 
 
+@app.get("/api/monitors/{monitor_id}")
+async def get_monitor(monitor_id: int) -> dict[str, Any]:
+    try:
+        return service.get_monitor(monitor_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Monitor not found") from exc
+
+
 @app.get("/api/monitor-types")
 async def monitor_types() -> list[dict[str, Any]]:
     return service.get_monitor_types()
@@ -168,6 +176,22 @@ async def delete_monitor(monitor_id: int) -> dict[str, str]:
 async def check_monitor(monitor_id: int) -> dict[str, Any]:
     try:
         return await service.run_check(monitor_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Monitor not found") from exc
+
+
+@app.post("/api/monitors/{monitor_id}/enable")
+async def enable_monitor(monitor_id: int) -> dict[str, Any]:
+    try:
+        return service.set_monitor_enabled(monitor_id, True)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Monitor not found") from exc
+
+
+@app.post("/api/monitors/{monitor_id}/disable")
+async def disable_monitor(monitor_id: int) -> dict[str, Any]:
+    try:
+        return service.set_monitor_enabled(monitor_id, False)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Monitor not found") from exc
 

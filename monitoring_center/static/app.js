@@ -292,7 +292,7 @@ function monitorCategoryOptions() {
   const options = [
     { value: "all", label: "Wszystkie" },
     { value: "devices", label: "Urządzenia" },
-    { value: "websites", label: "Strony WWW" },
+    { value: "websites", label: "WWW" },
     { value: "ha", label: "Home Assistant" },
   ];
   if (state.monitors.some((monitor) => monitorCategory(monitor) === "other")) {
@@ -689,10 +689,7 @@ async function handleCardAction(event) {
     await startMonitorTestRun(id, monitorReturnView(monitor));
   }
   if (action === "toggle-enabled") {
-    await api(`/api/monitors/${id}`, {
-      method: "PUT",
-      body: JSON.stringify({ enabled: !monitor.enabled }),
-    });
+    await api(`/api/monitors/${id}/${monitor.enabled ? "disable" : "enable"}`, { method: "POST" });
     toast("Wykonano poprawnie");
     refreshAll();
   }

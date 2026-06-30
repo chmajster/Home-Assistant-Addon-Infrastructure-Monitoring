@@ -2,6 +2,20 @@
 
 All notable changes to the **Monitoring Center** Home Assistant add-on are documented here.
 
+## [0.5.5] - 2026-06-30
+
+### Added
+
+- Added compatible `GET /api/monitors/{id}`, `POST /api/monitors/{id}/enable`, and `POST /api/monitors/{id}/disable` endpoints.
+- Added a `www` type alias mapped to the shared `http_hash` checker.
+- Added `SCHEMA_VERSION = 6` migration to fold old `www`/`website` records into the shared WWW checker.
+
+### Changed
+
+- Renamed the main monitors UI label to `Monitoring` and clarified WWW monitor type labels in the form.
+- Switched monitor enable/disable UI actions to the shared enable/disable endpoints.
+- Bumped add-on and application metadata version to `0.5.5`.
+
 ## [0.5.4] - 2026-06-30
 
 ### Added
