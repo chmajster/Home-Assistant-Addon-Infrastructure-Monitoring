@@ -14,8 +14,10 @@ from .database import Database, dumps_json, loads_json
 from .ha import HomeAssistantClient
 from .monitor_types import PRESETS, get_plugin, list_types, resolve_type
 from .monitor_types.base import CheckResult, MonitorContext, is_success_status
+from .validators import normalize_url_key
 
 LOGGER = logging.getLogger(__name__)
+URL_MONITOR_TYPES = {"http_status", "http_hash", "rest_api"}
 
 
 def utc_now() -> str:
@@ -152,6 +154,7 @@ class MonitorService:
 
     async def create_monitor(self, payload: dict[str, Any]) -> dict[str, Any]:
         monitor = self._normalize_payload(payload)
+        self._ensure_unique_url_monitor(monitor)
         cursor = self.db.execute(
             """
             INSERT INTO monitors(type, name, target, interval_seconds, group_id, enabled, config_json)
@@ -185,6 +188,7 @@ class MonitorService:
             "config": payload.get("config", current["config"]),
         }
         monitor = self._normalize_payload(merged)
+        self._ensure_unique_url_monitor(monitor, exclude_id=monitor_id)
         self.db.execute(
             """
             UPDATE monitors
@@ -584,7 +588,7 @@ class MonitorService:
             """
         )
         return {
-            "version": "0.3.1",
+            "version": "0.3.2",
             "database_path": str(self.config.database_path),
             "database_exists": self.config.database_path.exists(),
             "database_size_bytes": self.config.database_path.stat().st_size if self.config.database_path.exists() else 0,
@@ -618,6 +622,25 @@ class MonitorService:
             "enabled": bool(payload.get("enabled", True)),
             "config": config,
         }
+
+    def _ensure_unique_url_monitor(self, monitor: dict[str, Any], exclude_id: int | None = None) -> None:
+        if monitor["type"] not in URL_MONITOR_TYPES:
+            return
+        target_key = normalize_url_key(monitor["target"])
+        for existing in self.list_monitors():
+            if exclude_id is not None and existing["id"] == exclude_id:
+                continue
+            if existing["type"] not in URL_MONITOR_TYPES:
+                continue
+            try:
+                existing_key = normalize_url_key(existing["target"])
+            except HTTPException:
+                continue
+            if existing_key == target_key:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Monitor URL already exists: {existing['name']}",
+                )
 
     @staticmethod
     def _hydrate_monitor(row: dict[str, Any]) -> dict[str, Any]:

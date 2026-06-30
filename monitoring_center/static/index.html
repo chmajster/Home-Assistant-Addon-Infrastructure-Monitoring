@@ -12,7 +12,10 @@
         <h1>Monitoring Center</h1>
         <p>Lokalny monitoring urządzeń, stron WWW, historii i zdarzeń Home Assistant.</p>
       </div>
-      <button id="refreshBtn" class="primary">Odśwież</button>
+      <div class="top-actions">
+        <button id="themeBtn" type="button" aria-label="Przełącz motyw">Motyw: jasny</button>
+        <button id="refreshBtn" class="primary">Odśwież</button>
+      </div>
     </header>
 
     <nav class="tabs" aria-label="Sekcje">
@@ -87,7 +90,60 @@
           <h2>Strony WWW</h2>
           <button data-open-form="http_hash" class="primary">Dodaj stronę</button>
         </div>
+        <section class="panel filters">
+          <label>Filtr URL lub nazwa<input id="websiteSearch" placeholder="https://example.com" /></label>
+          <label class="check"><input id="websiteUniqueOnly" type="checkbox" checked /> Ukryj duplikaty URL</label>
+        </section>
         <div id="websiteList" class="cards"></div>
+      </section>
+
+      <section id="monitorDetail" class="view">
+        <div class="section-head">
+          <div>
+            <h2 id="detailTitle">Monitor</h2>
+            <p id="detailSubtitle"></p>
+          </div>
+          <div class="actions compact-actions">
+            <button id="detailBackBtn">Wróć</button>
+            <button id="detailEditBtn">Edytuj</button>
+            <button id="detailCheckBtn" class="primary">Test</button>
+          </div>
+        </div>
+        <div id="detailMetrics" class="metrics detail-metrics"></div>
+        <div class="split">
+          <section class="panel">
+            <h2>Szczegóły</h2>
+            <dl id="detailData" class="diagnostics"></dl>
+          </section>
+          <section class="panel">
+            <h2>SLO / Uptime</h2>
+            <div id="detailSlo" class="slo-grid"></div>
+          </section>
+        </div>
+        <section class="panel table-wrap">
+          <h2>Historia odpowiedzi</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>Data</th>
+                <th>Status</th>
+                <th>Odpowiedź</th>
+                <th>HTTP</th>
+                <th>Zmiana</th>
+                <th>Szczegóły</th>
+                <th>Błąd</th>
+              </tr>
+            </thead>
+            <tbody id="detailHistoryRows"></tbody>
+          </table>
+        </section>
+        <section class="panel">
+          <div class="section-head">
+            <h2>Zmiany zawartości</h2>
+            <button id="detailSnapshotsBtn">Pokaż diff</button>
+          </div>
+          <div id="detailSnapshots" class="list empty">Brak danych</div>
+        </section>
       </section>
 
       <section id="history" class="view">

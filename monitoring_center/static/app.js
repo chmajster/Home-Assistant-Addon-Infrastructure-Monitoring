@@ -5,14 +5,19 @@ const state = {
   presets: [],
   summary: null,
   settings: null,
+  selectedMonitorId: null,
+  websiteQuery: "",
+  websiteUniqueOnly: true,
 };
 
 const API_BASE = window.location.pathname === "/" ? "" : window.location.pathname.replace(/\/$/, "");
+const URL_MONITOR_TYPES = ["http_status", "http_hash", "rest_api"];
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
 
 document.addEventListener("DOMContentLoaded", () => {
+  initTheme();
   bindNavigation();
   bindForms();
   refreshAll();
@@ -22,15 +27,28 @@ document.addEventListener("DOMContentLoaded", () => {
 function bindNavigation() {
   $$(".tab").forEach((button) => {
     button.addEventListener("click", () => {
-      $$(".tab").forEach((tab) => tab.classList.remove("active"));
-      $$(".view").forEach((view) => view.classList.remove("active"));
-      button.classList.add("active");
-      $(`#${button.dataset.tab}`).classList.add("active");
+      showView(button.dataset.tab);
       if (button.dataset.tab === "diagnostics") loadDiagnostics();
       if (button.dataset.tab === "history") loadHistory();
     });
   });
   $("#refreshBtn").addEventListener("click", refreshAll);
+  $("#themeBtn").addEventListener("click", toggleTheme);
+  $("#detailBackBtn").addEventListener("click", () => showView("websites"));
+  $("#detailEditBtn").addEventListener("click", () => {
+    const monitor = state.monitors.find((item) => item.id === state.selectedMonitorId);
+    if (monitor) openMonitorForm(monitor);
+  });
+  $("#detailCheckBtn").addEventListener("click", async () => {
+    if (!state.selectedMonitorId) return;
+    await api(`/api/monitors/${state.selectedMonitorId}/check`, { method: "POST" });
+    toast("Test monitora zakończony.");
+    await refreshAll();
+    await showMonitorDetails(state.selectedMonitorId);
+  });
+  $("#detailSnapshotsBtn").addEventListener("click", () => {
+    if (state.selectedMonitorId) showSnapshots(state.selectedMonitorId);
+  });
   $$("[data-open-form]").forEach((button) => {
     button.addEventListener("click", () => openMonitorForm({ type: button.dataset.openForm }));
   });
@@ -50,6 +68,14 @@ function bindForms() {
   });
   $("#exportBtn").addEventListener("click", exportConfig);
   $("#importFile").addEventListener("change", importConfig);
+  $("#websiteSearch").addEventListener("input", (event) => {
+    state.websiteQuery = event.currentTarget.value.trim().toLowerCase();
+    renderMonitorLists();
+  });
+  $("#websiteUniqueOnly").addEventListener("change", (event) => {
+    state.websiteUniqueOnly = event.currentTarget.checked;
+    renderMonitorLists();
+  });
 }
 
 async function refreshAll() {
@@ -75,6 +101,9 @@ async function refreshAll() {
   renderGroups();
   renderHistoryMonitorOptions();
   renderSettings();
+  if ($("#monitorDetail").classList.contains("active") && state.selectedMonitorId) {
+    renderMonitorDetailsShell(state.selectedMonitorId);
+  }
 }
 
 async function api(path, options = {}) {
@@ -93,6 +122,29 @@ async function api(path, options = {}) {
   }
   const contentType = response.headers.get("content-type") || "";
   return contentType.includes("application/json") ? response.json() : response.text();
+}
+
+function initTheme() {
+  const saved = localStorage.getItem("monitoring-theme") || "light";
+  applyTheme(saved);
+}
+
+function toggleTheme() {
+  const current = document.documentElement.dataset.theme === "dark" ? "dark" : "light";
+  applyTheme(current === "dark" ? "light" : "dark");
+}
+
+function applyTheme(theme) {
+  const next = theme === "dark" ? "dark" : "light";
+  document.documentElement.dataset.theme = next;
+  localStorage.setItem("monitoring-theme", next);
+  $("#themeBtn").textContent = next === "dark" ? "Motyw: ciemny" : "Motyw: jasny";
+}
+
+function showView(viewId, activeTab = viewId) {
+  $$(".view").forEach((view) => view.classList.remove("active"));
+  $(`#${viewId}`)?.classList.add("active");
+  $$(".tab").forEach((tab) => tab.classList.toggle("active", tab.dataset.tab === activeTab));
 }
 
 function renderDashboard() {
@@ -124,7 +176,8 @@ function renderAvailabilityChart() {
 
 function renderMonitorLists() {
   renderCards("#deviceList", state.monitors.filter((m) => !["http_status", "http_hash", "ssl_certificate", "rest_api"].includes(m.type)));
-  renderCards("#websiteList", state.monitors.filter((m) => ["http_status", "http_hash", "ssl_certificate", "rest_api"].includes(m.type)));
+  const websites = state.monitors.filter((m) => ["http_status", "http_hash", "ssl_certificate", "rest_api"].includes(m.type));
+  renderCards("#websiteList", filterWebsiteMonitors(websites), { details: true });
 }
 
 function renderMonitorTypeOptions() {
@@ -238,14 +291,43 @@ function buildMonitorConfig(form, type) {
   return config;
 }
 
-function renderCards(selector, monitors) {
+function filterWebsiteMonitors(monitors) {
+  const filtered = state.websiteQuery
+    ? monitors.filter((monitor) => {
+        const haystack = `${monitor.name} ${monitor.target} ${typeLabel(monitor.type)}`.toLowerCase();
+        return haystack.includes(state.websiteQuery);
+      })
+    : monitors;
+  if (!state.websiteUniqueOnly) return filtered;
+  const seen = new Set();
+  return filtered.filter((monitor) => {
+    const key = normalizeUrlKey(monitor.target);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function normalizeUrlKey(target) {
+  try {
+    const url = new URL(target);
+    if (!["http:", "https:"].includes(url.protocol)) throw new Error("Not an HTTP URL");
+    const isDefaultPort = (url.protocol === "http:" && url.port === "80") || (url.protocol === "https:" && url.port === "443");
+    const port = url.port && !isDefaultPort ? `:${url.port}` : "";
+    return `${url.protocol}//${url.hostname.toLowerCase().replace(/\.$/, "")}${port}${url.pathname || "/"}${url.search}`;
+  } catch (_) {
+    return String(target || "").trim().toLowerCase();
+  }
+}
+
+function renderCards(selector, monitors, options = {}) {
   const root = $(selector);
   if (!monitors.length) {
     root.innerHTML = '<p class="empty">Brak monitorów w tej sekcji.</p>';
     return;
   }
   root.innerHTML = monitors.map((monitor) => `
-    <article class="card">
+    <article class="card ${options.details ? "clickable-card" : ""}" data-card-id="${monitor.id}" tabindex="${options.details ? "0" : "-1"}">
       <div class="card-head">
         <div>
           <h2>${escapeHtml(monitor.name)}</h2>
@@ -276,6 +358,19 @@ function renderCards(selector, monitors) {
     </article>
   `).join("");
   $$("[data-action]", root).forEach((button) => button.addEventListener("click", handleCardAction));
+  if (options.details) {
+    $$("[data-card-id]", root).forEach((card) => {
+      card.addEventListener("click", (event) => {
+        if (event.target.closest("button")) return;
+        showMonitorDetails(Number(card.dataset.cardId));
+      });
+      card.addEventListener("keydown", (event) => {
+        if (!["Enter", " "].includes(event.key)) return;
+        event.preventDefault();
+        showMonitorDetails(Number(card.dataset.cardId));
+      });
+    });
+  }
 }
 
 async function handleCardAction(event) {
@@ -298,6 +393,113 @@ async function handleCardAction(event) {
     refreshAll();
   }
   if (action === "snapshots") showSnapshots(id);
+}
+
+async function showMonitorDetails(id) {
+  state.selectedMonitorId = id;
+  showView("monitorDetail", "websites");
+  renderMonitorDetailsShell(id);
+  const monitor = state.monitors.find((item) => item.id === id);
+  if (!monitor) return;
+  const [slo, history, snapshots] = await Promise.all([
+    api(`/api/slo?monitor_id=${id}`),
+    api(`/api/history?monitor_id=${id}&limit=80`),
+    monitor.type === "http_hash" ? api(`/api/monitors/${id}/snapshots`) : Promise.resolve([]),
+  ]);
+  renderDetailSlo(slo);
+  renderDetailHistory(history);
+  renderDetailSnapshots(snapshots);
+}
+
+function renderMonitorDetailsShell(id) {
+  const monitor = state.monitors.find((item) => item.id === id);
+  if (!monitor) {
+    $("#detailTitle").textContent = "Monitor";
+    $("#detailSubtitle").textContent = "Nie znaleziono monitora.";
+    return;
+  }
+  $("#detailTitle").textContent = monitor.name;
+  $("#detailSubtitle").textContent = `${typeLabel(monitor.type)} · ${monitor.target}`;
+  $("#detailMetrics").innerHTML = [
+    ["Status", `<span class="badge ${badgeClass(monitor.status)}">${escapeHtml(monitor.status)}</span>`],
+    ["Odpowiedź", monitor.last_response_ms ? `${Number(monitor.last_response_ms).toFixed(1)} ms` : "-"],
+    ["HTTP", monitor.last_http_status || "-"],
+    ["Ostatni test", formatDate(monitor.last_checked_at)],
+    ["Ostatnia zmiana", formatDate(monitor.last_changed_at)],
+  ].map(([label, value]) => `<article><span>${value}</span><small>${label}</small></article>`).join("");
+  $("#detailData").innerHTML = Object.entries({
+    "Nazwa": monitor.name,
+    "Cel": monitor.target,
+    "Typ": typeLabel(monitor.type),
+    "Grupa": monitor.group_name || "Bez grupy",
+    "Interwał": `${monitor.interval_seconds}s`,
+    "Aktywny": monitor.enabled ? "tak" : "nie",
+    "Maintenance": monitor.maintenance_active ? `aktywny do ${formatDate(monitor.maintenance_until || monitor.group_maintenance_until)}` : "-",
+    "Błąd": monitor.last_error || "-",
+    "Konfiguracja": JSON.stringify(monitor.config || {}, null, 2),
+  }).map(([key, value]) => `<dt>${key}</dt><dd>${escapeHtml(String(value ?? "-"))}</dd>`).join("");
+}
+
+function renderDetailSlo(slo) {
+  $("#detailSlo").innerHTML = ["24h", "7d", "30d", "90d"].map((key) => {
+    const item = slo[key] || {};
+    return `<article class="slo-card">
+      <strong>${key}</strong>
+      <span>${item.uptime_percent ?? "-"}%</span>
+      <small>Śr. ${item.avg_response_ms ? item.avg_response_ms + " ms" : "-"} · Incydenty ${item.incidents ?? 0} · Testy ${item.checks ?? 0}</small>
+    </article>`;
+  }).join("");
+}
+
+function renderDetailHistory(rows) {
+  const body = $("#detailHistoryRows");
+  if (!rows.length) {
+    body.innerHTML = '<tr><td colspan="7" class="empty">Brak historii odpowiedzi.</td></tr>';
+    return;
+  }
+  body.innerHTML = rows.map((row) => {
+    const details = parseDetails(row.details_json);
+    const detailText = [
+      details.final_url ? `URL: ${details.final_url}` : "",
+      details.bytes ? `Rozmiar: ${details.bytes} B` : "",
+      details.expected_status_codes ? `Oczekiwane: ${details.expected_status_codes.join(", ")}` : "",
+      details.response_hash ? `Hash: ${String(details.response_hash).slice(0, 12)}` : "",
+    ].filter(Boolean).join(" · ");
+    return `<tr>
+      <td>${formatDate(row.checked_at)}</td>
+      <td><span class="badge ${badgeClass(row.status)}">${escapeHtml(row.status)}</span></td>
+      <td>${row.response_ms ? Number(row.response_ms).toFixed(1) + " ms" : "-"}</td>
+      <td>${row.http_status || "-"}</td>
+      <td>${row.content_changed ? "tak" : "nie"}</td>
+      <td>${escapeHtml(detailText || "-")}</td>
+      <td>${escapeHtml(row.error || "-")}</td>
+    </tr>`;
+  }).join("");
+}
+
+function renderDetailSnapshots(snapshots) {
+  const root = $("#detailSnapshots");
+  if (!snapshots.length) {
+    root.classList.add("empty");
+    root.innerHTML = "Brak zapisanych zmian.";
+    return;
+  }
+  root.classList.remove("empty");
+  root.innerHTML = snapshots.slice(0, 8).map((snapshot) => `
+    <div class="list-item">
+      <strong>${formatDate(snapshot.created_at)}</strong>
+      <small>${escapeHtml(snapshot.content_hash || "-")}</small>
+      <span>${escapeHtml((snapshot.raw_excerpt || snapshot.diff || "").slice(0, 220))}</span>
+    </div>
+  `).join("");
+}
+
+function parseDetails(value) {
+  try {
+    return value ? JSON.parse(value) : {};
+  } catch (_) {
+    return {};
+  }
 }
 
 function renderGroups() {
@@ -472,12 +674,27 @@ async function saveMonitor(event) {
     test_on_save: form.elements.test_on_save.checked,
     config,
   };
+  const duplicate = findDuplicateUrlMonitor(payload.target, type, id ? Number(id) : null);
+  if (duplicate) {
+    toast(`Ten URL jest już monitorowany: ${duplicate.name}`);
+    return;
+  }
   const path = id ? `/api/monitors/${id}` : "/api/monitors";
   const method = id ? "PUT" : "POST";
   await api(path, { method, body: JSON.stringify(payload) });
   $("#monitorDialog").close();
   toast("Monitor zapisany.");
   refreshAll();
+}
+
+function findDuplicateUrlMonitor(target, type, currentId) {
+  if (!URL_MONITOR_TYPES.includes(type)) return null;
+  const key = normalizeUrlKey(target);
+  return state.monitors.find((monitor) => (
+    monitor.id !== currentId
+    && URL_MONITOR_TYPES.includes(monitor.type)
+    && normalizeUrlKey(monitor.target) === key
+  ));
 }
 
 async function showSnapshots(id) {

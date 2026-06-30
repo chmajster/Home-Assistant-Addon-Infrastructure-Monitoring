@@ -4,6 +4,18 @@ Wszystkie istotne zmiany w projekcie **Home Assistant Monitoring / Monitoring Ce
 
 Format opiera się na konwencji Keep a Changelog, a wersjonowanie dodatku powinno podążać za SemVer tam, gdzie ma to zastosowanie.
 
+## [0.3.2] - 2026-06-30
+
+### Added
+
+- Dodano jasny motyw jako domyślny oraz przełącznik motywu w UI.
+- Dodano filtr i ukrywanie duplikatów URL w sekcji Strony WWW.
+- Dodano widok szczegółów monitora WWW z historią odpowiedzi, SLO i snapshotami zmian.
+
+### Fixed
+
+- Dodano blokadę zdublowanych monitorów URL dla typów HTTP/REST.
+
 ## [0.3.1] - 2026-06-18
 
 ### Fixed

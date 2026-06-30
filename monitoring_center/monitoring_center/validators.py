@@ -3,7 +3,7 @@ from __future__ import annotations
 import ipaddress
 import re
 import socket
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlunparse
 
 from fastapi import HTTPException
 
@@ -35,7 +35,22 @@ def validate_url(target: str) -> str:
         raise HTTPException(status_code=422, detail="Only http and https URLs are allowed")
     if not parsed.hostname:
         raise HTTPException(status_code=422, detail="URL hostname is required")
+    try:
+        parsed.port
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="URL port is invalid") from exc
     return value
+
+
+def normalize_url_key(target: str) -> str:
+    parsed = urlparse(validate_url(target))
+    scheme = parsed.scheme.lower()
+    hostname = (parsed.hostname or "").lower().rstrip(".")
+    port = parsed.port
+    include_port = port and not ((scheme == "http" and port == 80) or (scheme == "https" and port == 443))
+    netloc = f"{hostname}:{port}" if include_port else hostname
+    path = parsed.path or "/"
+    return urlunparse((scheme, netloc, path, "", parsed.query, ""))
 
 
 def ensure_public_url_if_required(url: str, block_private_networks: bool) -> None:
