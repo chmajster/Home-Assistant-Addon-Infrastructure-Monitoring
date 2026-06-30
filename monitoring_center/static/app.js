@@ -9,7 +9,12 @@ const state = {
   currentTest: null,
   monitorQuery: "",
   monitorTypeFilter: "all",
+  monitorStatusFilter: "all",
+  monitorGroupFilter: "all",
+  monitorSort: "name",
+  monitorView: "cards",
   dashboardTypeFilter: "all",
+  lastRefreshedAt: null,
 };
 
 const API_BASE = window.location.pathname === "/" ? "" : window.location.pathname.replace(/\/$/, "");
@@ -38,8 +43,9 @@ function bindNavigation() {
       if (button.dataset.tab === "history") loadHistory();
     });
   });
-  $("#refreshBtn").addEventListener("click", refreshAll);
+  $("#refreshBtn").addEventListener("click", manualRefresh);
   $("#themeBtn").addEventListener("click", toggleTheme);
+  $("#toast").addEventListener("click", hideToast);
   $("#detailBackBtn").addEventListener("click", () => showView("devices"));
   $("#testBackBtn").addEventListener("click", backFromMonitorTest);
   $("#testRepeatBtn").addEventListener("click", () => {
@@ -93,6 +99,22 @@ function bindForms() {
     state.monitorTypeFilter = event.currentTarget.value;
     renderMonitorLists();
   });
+  $("#monitorStatusFilter").addEventListener("change", (event) => {
+    state.monitorStatusFilter = event.currentTarget.value;
+    renderMonitorLists();
+  });
+  $("#monitorGroupFilter").addEventListener("change", (event) => {
+    state.monitorGroupFilter = event.currentTarget.value;
+    renderMonitorLists();
+  });
+  $("#monitorSort").addEventListener("change", (event) => {
+    state.monitorSort = event.currentTarget.value;
+    renderMonitorLists();
+  });
+  $("#monitorView").addEventListener("change", (event) => {
+    state.monitorView = event.currentTarget.value;
+    renderMonitorLists();
+  });
   $("#dashboardTypeFilter").addEventListener("change", (event) => {
     state.dashboardTypeFilter = event.currentTarget.value;
     renderDashboard();
@@ -114,6 +136,8 @@ async function refreshAll() {
   state.settings = settings;
   state.monitorTypes = monitorTypes;
   state.presets = presets;
+  state.lastRefreshedAt = new Date().toISOString();
+  $("#lastRefreshAt").textContent = `Odświeżono: ${formatDate(state.lastRefreshedAt)}`;
   renderCategoryFilterOptions();
   renderDashboard();
   renderMonitorTypeOptions();
@@ -129,6 +153,11 @@ async function refreshAll() {
   if ($("#monitorTestRun").classList.contains("active") && state.currentTest?.monitorId) {
     renderMonitorTestRun();
   }
+}
+
+async function manualRefresh() {
+  await refreshAll();
+  toast("Odświeżono dane.");
 }
 
 async function api(path, options = {}) {
@@ -192,10 +221,16 @@ function renderDashboard() {
   const responseTimes = monitors
     .map((monitor) => monitor.last_response_ms)
     .filter((value) => value !== null && value !== undefined);
+  const enabled = monitors.filter((monitor) => monitor.enabled);
+  const warning = enabled.filter((monitor) => monitor.status === "warning");
+  const errors = enabled.filter((monitor) => isErrorStatus(monitor.status));
+  const online = enabled.filter((monitor) => isSuccessStatus(monitor.status) && monitor.status !== "warning");
   $("#metricTotal").textContent = monitors.length;
-  $("#metricOnline").textContent = monitors.filter((monitor) => isSuccessStatus(monitor.status)).length;
-  $("#metricOffline").textContent = monitors.filter((monitor) => !isSuccessStatus(monitor.status)).length;
-  $("#metricChanged").textContent = recentChanges.length;
+  $("#metricOnline").textContent = online.length;
+  $("#metricWarning").textContent = warning.length;
+  $("#metricError").textContent = errors.length;
+  $("#metricMaintenance").textContent = monitors.filter((monitor) => monitor.maintenance_active).length;
+  $("#metricDisabled").textContent = monitors.filter((monitor) => !monitor.enabled).length;
   $("#metricAvg").textContent = responseTimes.length ? `${average(responseTimes).toFixed(1)} ms` : "-";
   renderList("#recentFailures", recentFailures, checkLine);
   renderRecentChanges(recentChanges);
@@ -221,7 +256,10 @@ function renderAvailabilityChart() {
 function renderMonitorLists() {
   const filtered = filterMonitorsForList(state.monitors);
   $("#monitorCountLabel").textContent = `${filtered.length} z ${state.monitors.length}`;
-  renderCards("#monitorList", filtered, { details: true });
+  $("#monitorList").classList.toggle("hidden", state.monitorView !== "cards");
+  $("#monitorTableWrap").classList.toggle("hidden", state.monitorView !== "table");
+  if (state.monitorView === "table") renderMonitorTable(filtered);
+  else renderCards("#monitorList", filtered, { details: true });
 }
 
 function renderCategoryFilterOptions() {
@@ -279,6 +317,18 @@ function renderGroupOptions() {
     .map((group) => `<option value="${group.id}">${escapeHtml(group.name)}</option>`)
     .join("");
   $("#monitorGroupSelect").value = current;
+  renderMonitorGroupFilterOptions();
+}
+
+function renderMonitorGroupFilterOptions() {
+  const select = $("#monitorGroupFilter");
+  if (!select) return;
+  const current = state.monitorGroupFilter;
+  select.innerHTML = '<option value="all">Wszystkie</option><option value="none">Bez grupy</option>' + state.groups
+    .map((group) => `<option value="${group.id}">${escapeHtml(group.name)}</option>`)
+    .join("");
+  select.value = Array.from(select.options).some((option) => option.value === current) ? current : "all";
+  state.monitorGroupFilter = select.value;
 }
 
 function renderSlo(slo) {
@@ -367,22 +417,99 @@ function buildMonitorConfig(form, type) {
 }
 
 function filterMonitorsForList(monitors) {
-  const byCategory = filterMonitorsByCategory(monitors, state.monitorTypeFilter);
-  if (!state.monitorQuery) return byCategory;
-  return byCategory.filter((monitor) => {
-    const config = monitor.config || {};
-    const haystack = [
-      monitor.name,
-      monitor.target,
-      monitor.status,
-      monitor.group_name,
-      typeLabel(monitor.type),
-      config.host,
-      config.topic,
-      config.json_path,
-    ].filter(Boolean).join(" ").toLowerCase();
-    return haystack.includes(state.monitorQuery);
+  const filtered = filterMonitorsByCategory(monitors, state.monitorTypeFilter)
+    .filter((monitor) => monitorMatchesStatus(monitor, state.monitorStatusFilter))
+    .filter((monitor) => monitorMatchesGroup(monitor, state.monitorGroupFilter))
+    .filter((monitor) => {
+      if (!state.monitorQuery) return true;
+      const config = monitor.config || {};
+      const haystack = [
+        monitor.name,
+        monitor.target,
+        monitor.status,
+        monitor.group_name,
+        typeLabel(monitor.type),
+        config.host,
+        config.topic,
+        config.json_path,
+      ].filter(Boolean).join(" ").toLowerCase();
+      return haystack.includes(state.monitorQuery);
+    });
+  return sortMonitors(filtered, state.monitorSort);
+}
+
+function monitorMatchesStatus(monitor, statusFilter) {
+  if (!statusFilter || statusFilter === "all") return true;
+  if (statusFilter === "disabled") return !monitor.enabled;
+  if (statusFilter === "maintenance") return Boolean(monitor.maintenance_active);
+  if (statusFilter === "ok") return monitor.enabled && isSuccessStatus(monitor.status) && monitor.status !== "warning";
+  if (statusFilter === "warning") return monitor.enabled && monitor.status === "warning";
+  if (statusFilter === "error") return monitor.enabled && isErrorStatus(monitor.status);
+  return monitor.status === statusFilter;
+}
+
+function monitorMatchesGroup(monitor, groupFilter) {
+  if (!groupFilter || groupFilter === "all") return true;
+  if (groupFilter === "none") return !monitor.group_id;
+  return String(monitor.group_id || "") === String(groupFilter);
+}
+
+function sortMonitors(monitors, sortKey) {
+  const sorted = [...monitors];
+  const text = (value) => String(value || "").toLowerCase();
+  const numeric = (value) => value === null || value === undefined || value === "" ? Number.POSITIVE_INFINITY : Number(value);
+  const checkedAt = (monitor) => monitor.last_checked_at ? new Date(monitor.last_checked_at).getTime() : 0;
+  sorted.sort((a, b) => {
+    if (sortKey === "status") return text(a.status).localeCompare(text(b.status)) || text(a.name).localeCompare(text(b.name));
+    if (sortKey === "response") return numeric(a.last_response_ms) - numeric(b.last_response_ms);
+    if (sortKey === "last_checked") return checkedAt(b) - checkedAt(a);
+    if (sortKey === "http") return numeric(a.last_http_status) - numeric(b.last_http_status);
+    if (sortKey === "group") return text(a.group_name).localeCompare(text(b.group_name)) || text(a.name).localeCompare(text(b.name));
+    return text(a.name).localeCompare(text(b.name));
   });
+  return sorted;
+}
+
+function renderMonitorTable(monitors) {
+  const body = $("#monitorTableRows");
+  if (!monitors.length) {
+    body.innerHTML = '<tr><td colspan="11" class="empty">Brak monitorów dla wybranych filtrów.</td></tr>';
+    return;
+  }
+  body.innerHTML = monitors.map((monitor) => `
+    <tr>
+      <td><span class="badge ${monitor.enabled ? badgeClass(monitor.status) : "unknown"}">${monitor.enabled ? escapeHtml(monitor.status) : "wyłączony"}</span></td>
+      <td>${escapeHtml(typeLabel(monitor.type))}</td>
+      <td><strong>${escapeHtml(monitor.name)}</strong></td>
+      <td>${targetHtml(monitor)}</td>
+      <td>${monitor.last_http_status || "-"}</td>
+      <td>${monitor.last_response_ms ? Number(monitor.last_response_ms).toFixed(1) + " ms" : "-"}</td>
+      <td>${monitor.interval_seconds}s</td>
+      <td>${escapeHtml(monitor.group_name || "Bez grupy")}</td>
+      <td>${formatDate(monitor.last_checked_at)}</td>
+      <td>${monitor.maintenance_active ? formatDate(monitor.maintenance_until || monitor.group_maintenance_until) : "-"}</td>
+      <td><div class="actions table-actions">${renderCardActions(monitor)}</div></td>
+    </tr>
+  `).join("");
+  $$("[data-action]", body).forEach((button) => button.addEventListener("click", handleCardAction));
+}
+
+function targetHtml(monitor) {
+  const value = monitor.target || "-";
+  if (monitorCategory(monitor) === "websites") {
+    return `<a class="target-link" href="${escapeHtml(value)}" title="${escapeHtml(value)}" target="_blank" rel="noreferrer">${escapeHtml(value)}</a>`;
+  }
+  return `<span class="target-text" title="${escapeHtml(value)}">${escapeHtml(value)}</span>`;
+}
+
+function diagnosticMessage(monitor) {
+  const error = String(monitor.last_error || "");
+  if (monitor.last_http_status === 403 || error.includes("403")) {
+    return "Serwer odrzucił żądanie. Możliwa blokada botów, Cloudflare, WAF albo brak odpowiednich nagłówków.";
+  }
+  if (/timeout|timed out|czas/i.test(error)) return "Przekroczono czas oczekiwania na odpowiedź.";
+  if (/dns|resolve|name/i.test(error)) return "Nie udało się rozwiązać nazwy hosta.";
+  return error;
 }
 
 function filterMonitorsByCategory(monitors, category) {
@@ -420,7 +547,7 @@ function renderCards(selector, monitors, options = {}) {
       <div class="card-head">
         <div>
           <h2>${escapeHtml(monitor.name)}</h2>
-          <p>${escapeHtml(monitor.target)}</p>
+          <p>${targetHtml(monitor)}</p>
         </div>
         <span class="badge ${monitor.enabled ? badgeClass(monitor.status) : "unknown"}">${monitor.enabled ? escapeHtml(monitor.status) : "nieaktywny"}</span>
       </div>
@@ -436,7 +563,7 @@ function renderCards(selector, monitors, options = {}) {
   if (options.details) {
     $$("[data-card-id]", root).forEach((card) => {
       card.addEventListener("click", (event) => {
-        if (event.target.closest("button")) return;
+        if (event.target.closest(".actions")) return;
         showMonitorDetails(Number(card.dataset.cardId));
       });
       card.addEventListener("keydown", (event) => {
@@ -467,6 +594,7 @@ function renderMonitorMeta(monitor) {
     );
     if (monitor.type === "http_hash") rows.push(["Suma WWW", hashHtml(monitor.last_content_hash)]);
     rows.push(["Ostatni błąd", monitor.last_error || "-"]);
+    if (diagnosticMessage(monitor)) rows.push(["Diagnostyka", diagnosticMessage(monitor)]);
   } else if (monitorCategory(monitor) === "devices") {
     rows.splice(1, 0,
       ["IP / host", config.host || monitor.target],
@@ -476,6 +604,7 @@ function renderMonitorMeta(monitor) {
     if (config.port) rows.push(["Port", config.port]);
     if (config.topic) rows.push(["Topic", config.topic]);
     rows.push(["Ostatni błąd", monitor.last_error || "-"]);
+    if (diagnosticMessage(monitor)) rows.push(["Diagnostyka", diagnosticMessage(monitor)]);
   } else if (monitorCategory(monitor) === "ha") {
     rows.splice(1, 0,
       ["Entity ID", monitor.target],
@@ -484,6 +613,7 @@ function renderMonitorMeta(monitor) {
     );
     rows.push(["Stany alarmowe", (config.alert_states || []).join(", ") || "-"]);
     rows.push(["Ostatni błąd", monitor.last_error || "-"]);
+    if (diagnosticMessage(monitor)) rows.push(["Diagnostyka", diagnosticMessage(monitor)]);
   } else {
     rows.splice(1, 0,
       ["Cel", monitor.target],
@@ -491,6 +621,7 @@ function renderMonitorMeta(monitor) {
       ["Odpowiedź", monitor.last_response_ms ? `${Number(monitor.last_response_ms).toFixed(1)} ms` : "-"],
     );
     rows.push(["Ostatni błąd", monitor.last_error || "-"]);
+    if (diagnosticMessage(monitor)) rows.push(["Diagnostyka", diagnosticMessage(monitor)]);
   }
   return rows.map(([label, value]) => {
     const renderedValue = label === "Suma WWW" ? value : escapeHtml(value);
@@ -500,12 +631,19 @@ function renderMonitorMeta(monitor) {
 
 function renderCardActions(monitor) {
   return `
-    <button data-action="check" data-id="${monitor.id}">Test</button>
+    <button data-action="check" data-id="${monitor.id}" class="primary">Test</button>
     <button data-action="edit" data-id="${monitor.id}">Edytuj</button>
-    <button data-action="maintenance" data-id="${monitor.id}">Serwis</button>
-    <button data-action="toggle-enabled" data-id="${monitor.id}">${monitor.enabled ? "Wyłącz monitoring" : "Włącz monitoring"}</button>
-    ${monitor.type === "http_hash" ? `<button data-action="snapshots" data-id="${monitor.id}">Zmiany</button>` : ""}
-    <button data-action="delete" data-id="${monitor.id}" class="danger-action">Usuń</button>
+    <details class="action-menu">
+      <summary aria-label="Akcje serwisowe monitora ${escapeHtml(monitor.name)}">Serwis</summary>
+      <button data-action="maintenance" data-id="${monitor.id}">Ustaw serwis</button>
+      ${monitor.maintenance_until ? `<button data-action="maint-clear" data-id="${monitor.id}">Wyłącz serwis</button>` : ""}
+    </details>
+    <details class="action-menu">
+      <summary aria-label="Więcej akcji monitora ${escapeHtml(monitor.name)}">Więcej</summary>
+      <button data-action="toggle-enabled" data-id="${monitor.id}">${monitor.enabled ? "Wyłącz monitoring" : "Włącz monitoring"}</button>
+      ${monitor.type === "http_hash" ? `<button data-action="snapshots" data-id="${monitor.id}">Zmiany</button>` : ""}
+      <button data-action="delete" data-id="${monitor.id}" class="danger-action">Usuń</button>
+    </details>
   `;
 }
 
@@ -1071,7 +1209,7 @@ async function saveMonitor(event) {
   const method = id ? "PUT" : "POST";
   await api(path, { method, body: JSON.stringify(payload) });
   $("#monitorDialog").close();
-  toast("Wykonano poprawnie");
+  toast(id ? "Monitor zaktualizowany." : "Monitor dodany.");
   refreshAll();
 }
 
@@ -1406,6 +1544,7 @@ function checkLine(row) {
 }
 
 function badgeClass(status) {
+  if (status === "warning") return "warning";
   if (isSuccessStatus(status)) return "ok";
   if (["offline", "error"].includes(status)) return "bad";
   if (["closed", "timeout"].includes(status)) return "bad";
@@ -1418,6 +1557,10 @@ function typeLabel(type) {
 
 function isSuccessStatus(status) {
   return ["online", "ok", "open", "warning"].includes(status);
+}
+
+function isErrorStatus(status) {
+  return ["offline", "error", "closed", "timeout"].includes(status);
 }
 
 function average(values) {
@@ -1469,7 +1612,12 @@ function toast(message, type = "success") {
   node.classList.add("show");
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => {
-    node.classList.remove("show");
-    node.classList.remove("error");
+    hideToast();
   }, 3800);
+}
+
+function hideToast() {
+  const node = $("#toast");
+  node.classList.remove("show");
+  node.classList.remove("error");
 }

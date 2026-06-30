@@ -12,6 +12,12 @@
         <h1>Monitoring Center</h1>
         <p>Lokalny monitoring urządzeń, stron WWW, historii i zdarzeń Home Assistant.</p>
       </div>
+      <div class="topbar-actions">
+        <span id="lastRefreshAt">Odświeżono: -</span>
+        <button data-open-form="ping_host" class="primary">Dodaj monitor</button>
+        <button id="refreshBtn">Odśwież</button>
+        <button id="themeBtn" type="button" aria-label="Przełącz motyw">Motyw: jasny</button>
+      </div>
     </header>
 
     <nav class="tabs" aria-label="Sekcje">
@@ -23,11 +29,6 @@
         <button class="tab" data-tab="settings">Ustawienia</button>
         <button class="tab" data-tab="diagnostics">Diagnostyka</button>
       </div>
-      <div class="nav-actions">
-        <button data-open-form="ping_host" class="primary">Dodaj monitor</button>
-        <button id="themeBtn" type="button" aria-label="Przełącz motyw">Motyw: jasny</button>
-        <button id="refreshBtn">Odśwież</button>
-      </div>
     </nav>
 
     <main>
@@ -36,10 +37,12 @@
           <label>Typ monitora<select id="dashboardTypeFilter"></select></label>
         </section>
         <div class="metrics">
-          <article><span id="metricTotal">0</span><small>Monitorów</small></article>
-          <article><span id="metricOnline">0</span><small>Online</small></article>
-          <article><span id="metricOffline">0</span><small>Offline</small></article>
-          <article><span id="metricChanged">0</span><small>Zmian WWW</small></article>
+          <article><span id="metricTotal">0</span><small>Wszystkie monitory</small></article>
+          <article><span id="metricOnline">0</span><small>Online / OK</small></article>
+          <article><span id="metricWarning">0</span><small>Warning</small></article>
+          <article><span id="metricError">0</span><small>Error</small></article>
+          <article><span id="metricMaintenance">0</span><small>W serwisie</small></article>
+          <article><span id="metricDisabled">0</span><small>Wyłączone</small></article>
           <article><span id="metricAvg">-</span><small>Śr. odpowiedź</small></article>
         </div>
         <div class="split">
@@ -75,11 +78,52 @@
         </div>
         <section class="panel filters">
           <label>Typ monitora<select id="monitorTypeFilter"></select></label>
+          <label>Status<select id="monitorStatusFilter">
+            <option value="all">Wszystkie</option>
+            <option value="ok">OK</option>
+            <option value="warning">Warning</option>
+            <option value="error">Error</option>
+            <option value="maintenance">Serwis</option>
+            <option value="disabled">Wyłączone</option>
+          </select></label>
+          <label>Grupa<select id="monitorGroupFilter"></select></label>
           <label>Filtr<input id="monitorSearch" placeholder="Nazwa, host, URL, status" /></label>
+          <label>Sortuj<select id="monitorSort">
+            <option value="name">Nazwa</option>
+            <option value="status">Status</option>
+            <option value="response">Czas odpowiedzi</option>
+            <option value="last_checked">Ostatni test</option>
+            <option value="http">HTTP status</option>
+            <option value="group">Grupa</option>
+          </select></label>
+          <label>Widok<select id="monitorView">
+            <option value="cards">Karty</option>
+            <option value="table">Tabela</option>
+          </select></label>
           <label>Preset<select id="presetSelect"><option value="">Wybierz preset</option></select></label>
           <button id="applyPresetBtn">Skopiuj preset</button>
         </section>
         <div id="monitorList" class="cards"></div>
+        <section id="monitorTableWrap" class="panel table-wrap hidden">
+          <table>
+            <thead>
+              <tr>
+                <th>Status</th>
+                <th>Typ</th>
+                <th>Nazwa</th>
+                <th>Adres / URL / IP / Encja</th>
+                <th>HTTP</th>
+                <th>Odpowiedź</th>
+                <th>Interwał</th>
+                <th>Grupa</th>
+                <th>Ostatni test</th>
+                <th>Maintenance</th>
+                <th>Akcje</th>
+              </tr>
+            </thead>
+            <tbody id="monitorTableRows"></tbody>
+          </table>
+        </section>
       </section>
 
       <section id="groups" class="view">
@@ -348,7 +392,7 @@
       </form>
     </dialog>
 
-    <div id="toast" role="status"></div>
+    <div id="toast" role="status" aria-label="Komunikat aplikacji" title="Kliknij, aby zamknąć"></div>
     <script src="static/app.js"></script>
   </body>
 </html>

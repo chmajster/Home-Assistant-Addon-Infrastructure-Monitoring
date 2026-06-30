@@ -2,6 +2,21 @@
 
 All notable changes to the **Monitoring Center** Home Assistant add-on are documented here.
 
+## [0.5.0] - 2026-06-30
+
+### Added
+
+- Added a refreshed admin dashboard layout with last refresh information and richer monitor statistics.
+- Added shared monitor filters for type, status, group, search, sorting, and card/table view mode.
+- Added a responsive monitor table for larger installations.
+
+### Changed
+
+- Removed the separate Websites navigation entry and folded website monitors into the main Monitors view.
+- Simplified monitor card actions with Service and More menus.
+- Improved monitor cards with type-specific fields, readable targets, diagnostics, and status badges.
+- Bumped add-on and application metadata version to `0.5.0`.
+
 ## [0.4.1] - 2026-06-30
 
 ### Fixed

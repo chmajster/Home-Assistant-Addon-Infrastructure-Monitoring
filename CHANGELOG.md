@@ -4,6 +4,21 @@ Wszystkie istotne zmiany w projekcie **Home Assistant Monitoring / Monitoring Ce
 
 Format opiera się na konwencji Keep a Changelog, a wersjonowanie dodatku powinno podążać za SemVer tam, gdzie ma to zastosowanie.
 
+## [0.5.0] - 2026-06-30
+
+### Added
+
+- Dodano odświeżony układ panelu administracyjnego z informacją o ostatnim odświeżeniu i pełniejszymi statystykami monitorów.
+- Dodano wspólne filtry monitorów: typ, status, grupa, wyszukiwarka, sortowanie oraz tryb kart/tabeli.
+- Dodano responsywny widok tabeli monitorów dla większych instalacji.
+
+### Changed
+
+- Usunięto osobną pozycję nawigacji „Strony WWW”; monitory WWW są teraz typem w widoku „Monitory”.
+- Uporządkowano akcje kart monitorów w menu „Serwis” i „Więcej”.
+- Poprawiono karty monitorów o pola zależne od typu, czytelne adresy, diagnostykę i badge statusów.
+- Podniesiono wersję dodatku i metadanych aplikacji do `0.5.0`.
+
 ## [0.4.1] - 2026-06-30
 
 ### Fixed
