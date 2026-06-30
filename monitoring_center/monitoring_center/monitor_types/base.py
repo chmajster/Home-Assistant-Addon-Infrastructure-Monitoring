@@ -42,20 +42,34 @@ class MonitorTypePlugin(Protocol):
         ...
 
 
-def positive_int(value: Any, default: int, minimum: int = 1, maximum: int = 65535) -> int:
+def positive_int(value: Any, default: int, minimum: int = 1, maximum: int | None = 65535) -> int:
     try:
         number = int(value)
     except (TypeError, ValueError):
         number = default
-    return max(minimum, min(maximum, number))
+    number = max(minimum, number)
+    return min(maximum, number) if maximum is not None else number
 
 
-def positive_float(value: Any, default: float, minimum: float = 0.1, maximum: float = 300.0) -> float:
+def positive_float(value: Any, default: float, minimum: float = 0.1, maximum: float | None = 300.0) -> float:
     try:
         number = float(value)
     except (TypeError, ValueError):
         number = default
-    return max(minimum, min(maximum, number))
+    number = max(minimum, number)
+    return min(maximum, number) if maximum is not None else number
+
+
+def timeout_seconds_from_config(config: dict[str, Any], default_seconds: float, minimum: float = 1.0) -> float:
+    if config.get("timeout_minutes") not in (None, ""):
+        return positive_float(config.get("timeout_minutes"), default_seconds / 60, minimum / 60, None) * 60
+    return positive_float(config.get("timeout_seconds"), default_seconds, minimum, None)
+
+
+def normalize_timeout_config(config: dict[str, Any], default_seconds: float, minimum: float = 1.0) -> None:
+    timeout_seconds = timeout_seconds_from_config(config, default_seconds, minimum)
+    config.pop("timeout_seconds", None)
+    config["timeout_minutes"] = timeout_seconds / 60
 
 
 def csv_ints(value: Any, default: list[int]) -> list[int]:

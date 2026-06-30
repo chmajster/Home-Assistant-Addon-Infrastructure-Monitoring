@@ -10,7 +10,7 @@ from typing import Any
 
 from ..config import AppConfig
 from ..validators import validate_device_target
-from .base import CheckResult, MonitorContext, positive_int
+from .base import CheckResult, MonitorContext, normalize_timeout_config, timeout_seconds_from_config
 
 
 class PingHostMonitor:
@@ -21,23 +21,13 @@ class PingHostMonitor:
 
     def validate(self, target: str, config: dict[str, Any], app_config: AppConfig) -> tuple[str, dict[str, Any]]:
         normalized = validate_device_target(target)
-        config["timeout_seconds"] = positive_int(
-            config.get("timeout_seconds"),
-            app_config.ping_timeout_seconds,
-            minimum=1,
-            maximum=30,
-        )
+        normalize_timeout_config(config, app_config.default_timeout_minutes * 60)
         return normalized, config
 
     async def check(self, monitor: dict[str, Any], context: MonitorContext) -> CheckResult:
         try:
             target = validate_device_target(monitor["target"])
-            timeout = positive_int(
-                monitor["config"].get("timeout_seconds"),
-                context.config.ping_timeout_seconds,
-                minimum=1,
-                maximum=30,
-            )
+            timeout = timeout_seconds_from_config(monitor["config"], context.config.default_timeout_minutes * 60)
             started = time.perf_counter()
             success, error = await asyncio.to_thread(_icmp_echo, target, timeout)
             response_ms = (time.perf_counter() - started) * 1000
@@ -58,7 +48,7 @@ class PingHostMonitor:
             return CheckResult("offline", error=str(exc), packet_loss=100.0)
 
 
-def _icmp_echo(target: str, timeout: int) -> tuple[bool, str]:
+def _icmp_echo(target: str, timeout: float) -> tuple[bool, str]:
     try:
         addresses = socket.getaddrinfo(target, None, type=socket.SOCK_RAW)
     except socket.gaierror as exc:
@@ -80,7 +70,7 @@ def _icmp_echo(target: str, timeout: int) -> tuple[bool, str]:
     return False, last_error or "No usable IP address found"
 
 
-def _send_icmp_echo(family: socket.AddressFamily, sockaddr: tuple[Any, ...], timeout: int) -> tuple[bool, str]:
+def _send_icmp_echo(family: socket.AddressFamily, sockaddr: tuple[Any, ...], timeout: float) -> tuple[bool, str]:
     protocol = socket.IPPROTO_ICMP if family == socket.AF_INET else socket.IPPROTO_ICMPV6
     request_type = 8 if family == socket.AF_INET else 128
     reply_type = 0 if family == socket.AF_INET else 129

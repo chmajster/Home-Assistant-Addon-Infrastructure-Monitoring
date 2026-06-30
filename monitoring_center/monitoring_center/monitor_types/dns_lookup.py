@@ -4,7 +4,7 @@ import asyncio
 from typing import Any
 
 from ..config import AppConfig
-from .base import CheckResult, MonitorContext, positive_float
+from .base import CheckResult, MonitorContext, normalize_timeout_config, timeout_seconds_from_config
 
 
 class DnsLookupMonitor:
@@ -20,14 +20,14 @@ class DnsLookupMonitor:
         config["record_type"] = str(config.get("record_type") or "A").upper()
         if config["record_type"] not in {"A", "AAAA", "CNAME", "MX", "TXT"}:
             raise ValueError("Unsupported DNS record type")
-        config["timeout_seconds"] = positive_float(config.get("timeout_seconds"), 5.0, 1, 60)
+        normalize_timeout_config(config, app_config.default_timeout_minutes * 60)
         return domain, config
 
     async def check(self, monitor: dict[str, Any], context: MonitorContext) -> CheckResult:
         try:
             domain = monitor["target"].strip().rstrip(".")
             record_type = str(monitor["config"].get("record_type") or "A").upper()
-            timeout = positive_float(monitor["config"].get("timeout_seconds"), 5.0, 1, 60)
+            timeout = timeout_seconds_from_config(monitor["config"], context.config.default_timeout_minutes * 60)
             records = await asyncio.wait_for(asyncio.to_thread(_resolve, domain, record_type), timeout=timeout)
             previous = monitor["config"].get("last_dns_result")
             changed = bool(previous and previous != records)

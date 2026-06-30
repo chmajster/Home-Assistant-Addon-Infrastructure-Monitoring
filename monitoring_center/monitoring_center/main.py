@@ -25,7 +25,7 @@ migrate(db)
 ha = HomeAssistantClient(config)
 service = MonitorService(db, config, ha)
 
-app = FastAPI(title="Monitoring Center", version="0.3.2")
+app = FastAPI(title="Monitoring Center", version="0.4.0")
 static_path = Path(__file__).resolve().parent.parent / "static"
 scheduler_task: asyncio.Task[Any] | None = None
 
@@ -117,6 +117,11 @@ async def clear_group_maintenance(group_id: int) -> dict[str, Any]:
 @app.post("/api/monitors")
 async def create_monitor(payload: MonitorIn) -> dict[str, Any]:
     return await service.create_monitor(payload.model_dump())
+
+
+@app.post("/api/monitors/test")
+async def test_monitor(payload: MonitorIn) -> dict[str, Any]:
+    return await service.test_monitor(payload.model_dump())
 
 
 @app.put("/api/monitors/{monitor_id}")

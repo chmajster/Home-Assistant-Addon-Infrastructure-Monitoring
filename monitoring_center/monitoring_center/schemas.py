@@ -47,9 +47,8 @@ class MaintenanceIn(BaseModel):
 
 class SettingsIn(BaseModel):
     retention_days: int = Field(ge=1, le=3650)
-    request_timeout_seconds: int = Field(ge=1, le=120)
-    ping_timeout_seconds: int = Field(ge=1, le=30)
-    max_page_size_kb: int = Field(ge=16, le=10240)
+    default_timeout_minutes: float = Field(gt=0)
+    max_page_size_mb: float = Field(gt=0)
     block_private_networks: bool
     publish_home_assistant_entities: bool
     publish_home_assistant_events: bool

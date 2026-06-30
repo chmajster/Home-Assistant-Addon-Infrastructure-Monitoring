@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from .database import Database
+from .database import Database, dumps_json, loads_json
 
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 def migrate(db: Database) -> None:
@@ -27,6 +27,9 @@ def migrate(db: Database) -> None:
     if version < 3:
         _migration_003(db)
         db.execute("INSERT INTO schema_migrations(version) VALUES (?)", (3,))
+    if version < 4:
+        _migration_004(db)
+        db.execute("INSERT INTO schema_migrations(version) VALUES (?)", (4,))
 
 
 def _migration_001(db: Database) -> None:
@@ -197,3 +200,59 @@ def _migration_003(db: Database) -> None:
         CREATE INDEX IF NOT EXISTS idx_monitors_maintenance ON monitors(maintenance_until);
         """
     )
+
+
+def _migration_004(db: Database) -> None:
+    settings = {
+        row["key"]: loads_json(row["value"], row["value"])
+        for row in db.fetchall("SELECT key, value FROM settings")
+    }
+    if "default_timeout_minutes" not in settings:
+        timeout_seconds = settings.get("request_timeout_seconds", settings.get("ping_timeout_seconds", 300))
+        db.execute(
+            """
+            INSERT INTO settings(key, value, updated_at) VALUES ('default_timeout_minutes', ?, datetime('now'))
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')
+            """,
+            (dumps_json(max(_safe_float(timeout_seconds, 300) / 60, 1 / 60)),),
+        )
+    if "max_page_size_mb" not in settings:
+        max_page_size_kb = settings.get("max_page_size_kb", 512)
+        db.execute(
+            """
+            INSERT INTO settings(key, value, updated_at) VALUES ('max_page_size_mb', ?, datetime('now'))
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')
+            """,
+            (dumps_json(max(_safe_float(max_page_size_kb, 512) / 1024, 1 / 1024)),),
+        )
+    db.execute("DELETE FROM settings WHERE key IN ('request_timeout_seconds', 'ping_timeout_seconds', 'max_page_size_kb')")
+
+    for row in db.fetchall("SELECT id, config_json FROM monitors"):
+        config = loads_json(row.get("config_json"), {})
+        changed = False
+        if "timeout_minutes" not in config and "timeout_seconds" in config:
+            try:
+                config["timeout_minutes"] = _safe_float(config.pop("timeout_seconds"), 300) / 60
+                changed = True
+            except (TypeError, ValueError):
+                config.pop("timeout_seconds", None)
+                changed = True
+        if "max_page_size_mb" not in config and "max_page_size_kb" in config:
+            try:
+                config["max_page_size_mb"] = _safe_float(config.pop("max_page_size_kb"), 512) / 1024
+                changed = True
+            except (TypeError, ValueError):
+                config.pop("max_page_size_kb", None)
+                changed = True
+        if changed:
+            db.execute(
+                "UPDATE monitors SET config_json = ?, updated_at = datetime('now') WHERE id = ?",
+                (dumps_json(config), row["id"]),
+            )
+
+
+def _safe_float(value: object, default: float) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default

@@ -66,9 +66,8 @@ Najważniejsze opcje:
 - `retention_days` - retencja historii,
 - `default_device_interval` - domyślny interwał ping,
 - `default_website_interval` - domyślny interwał HTTP,
-- `request_timeout_seconds` - timeout HTTP,
-- `ping_timeout_seconds` - timeout ping,
-- `max_page_size_kb` - limit pobieranej strony,
+- `default_timeout_minutes` - domyślny timeout monitorów w minutach,
+- `max_page_size_mb` - limit pobieranej strony w MB,
 - `block_private_networks` - ochrona SSRF dla monitoringu URL,
 - `publish_home_assistant_entities` - publikacja encji,
 - `publish_home_assistant_events` - publikacja eventów.
@@ -127,7 +126,7 @@ Ping hosta:
   "target": "192.168.1.1",
   "interval_seconds": 60,
   "config": {
-    "timeout_seconds": 3
+    "timeout_minutes": 0.05
   }
 }
 ```
@@ -143,7 +142,7 @@ Port TCP:
   "config": {
     "host": "192.168.1.40",
     "port": 8123,
-    "timeout_seconds": 5
+    "timeout_minutes": 0.0833
   }
 }
 ```
@@ -160,8 +159,8 @@ Hash strony WWW:
     "expected_status_codes": [200],
     "css_selector": "main",
     "ignore_patterns": ["\\\\d{4}-\\\\d{2}-\\\\d{2}"],
-    "max_page_size_kb": 512,
-    "timeout_seconds": 10
+    "max_page_size_mb": 5,
+    "timeout_minutes": 5
   }
 }
 ```
@@ -179,7 +178,7 @@ Certyfikat SSL:
     "port": 443,
     "warning_days": 30,
     "error_days": 7,
-    "timeout_seconds": 5
+    "timeout_minutes": 0.0833
   }
 }
 ```
@@ -194,7 +193,7 @@ Encja Home Assistant:
   "interval_seconds": 60,
   "config": {
     "alert_states": ["unavailable", "unknown", "off"],
-    "timeout_seconds": 5
+    "timeout_minutes": 0.0833
   }
 }
 ```

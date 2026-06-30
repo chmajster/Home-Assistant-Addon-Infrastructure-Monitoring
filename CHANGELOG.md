@@ -4,6 +4,37 @@ Wszystkie istotne zmiany w projekcie **Home Assistant Monitoring / Monitoring Ce
 
 Format opiera się na konwencji Keep a Changelog, a wersjonowanie dodatku powinno podążać za SemVer tam, gdzie ma to zastosowanie.
 
+## [0.4.0] - 2026-06-30
+
+### Added
+
+- Dodano popupy/toasty sukcesu po operacjach na monitorach i ustawieniach.
+- Dodano przełączanie jasnego i ciemnego motywu z zapisem wyboru lokalnie w przeglądarce.
+- Dodano sterowanie głównymi akcjami z navbara.
+- Dodano możliwość włączania i wyłączania monitorów bez ich usuwania.
+- Dodano test monitora bez zapisu z poziomu formularza dodawania/edycji.
+- Dodano prezentację daty sprawdzenia i sumy kontrolnej WWW na kartach, w szczegółach monitora, w historii oraz w wyniku testu formularza.
+- Dodano endpoint `POST /api/monitors/test`.
+
+### Changed
+
+- Ustawiono domyślny timeout monitorów na 5 minut.
+- Ujednolicono konfigurację timeoutów do pól `default_timeout_minutes` i `timeout_minutes`.
+- Zmieniono limit pobieranej strony z KB na MB przez pole `max_page_size_mb`.
+- Usunięto sztuczne maksymalne limity timeoutów i limitu pobieranej strony tam, gdzie użytkownik podaje własną wartość.
+- Zaktualizowano konfigurację dodatku, przykładowe opcje, tłumaczenia i dokumentację do nowych pól timeoutu oraz limitu strony.
+
+### Fixed
+
+- Błędy walidacji/API nie zamykają już formularza monitora.
+- Zachowano kompatybilność ze starymi polami `request_timeout_seconds`, `ping_timeout_seconds`, `timeout_seconds` i `max_page_size_kb`.
+
+### Migration
+
+- Dodano migrację konfiguracji do `SCHEMA_VERSION = 4`.
+- Istniejące monitory bez pola aktywności pozostają domyślnie aktywne.
+- Stare wartości timeoutów i limitów strony są konwertowane do minut oraz MB.
+
 ## [0.3.2] - 2026-06-30
 
 ### Added

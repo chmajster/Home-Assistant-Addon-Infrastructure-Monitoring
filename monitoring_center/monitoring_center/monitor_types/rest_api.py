@@ -9,7 +9,7 @@ import httpx
 
 from ..config import AppConfig
 from ..validators import ensure_public_url_if_required, validate_url
-from .base import CheckResult, MonitorContext, csv_ints, positive_float
+from .base import CheckResult, MonitorContext, csv_ints, normalize_timeout_config, timeout_seconds_from_config
 
 
 class RestApiMonitor:
@@ -20,14 +20,17 @@ class RestApiMonitor:
 
     def validate(self, target: str, config: dict[str, Any], app_config: AppConfig) -> tuple[str, dict[str, Any]]:
         config["expected_status_codes"] = csv_ints(config.get("expected_status_codes"), [200])
-        config["timeout_seconds"] = positive_float(config.get("timeout_seconds"), app_config.request_timeout_seconds, 1, 120)
+        normalize_timeout_config(config, app_config.default_timeout_minutes * 60)
         return validate_url(target), config
 
     async def check(self, monitor: dict[str, Any], context: MonitorContext) -> CheckResult:
         try:
             url = validate_url(monitor["target"])
             ensure_public_url_if_required(url, bool(context.settings["block_private_networks"]))
-            timeout = positive_float(monitor["config"].get("timeout_seconds"), context.settings["request_timeout_seconds"], 1, 120)
+            timeout = timeout_seconds_from_config(
+                monitor["config"],
+                float(context.settings["default_timeout_minutes"]) * 60,
+            )
             expected_codes = csv_ints(monitor["config"].get("expected_status_codes"), [200])
             started = time.perf_counter()
             async with httpx.AsyncClient(timeout=timeout, follow_redirects=True, trust_env=False) as client:

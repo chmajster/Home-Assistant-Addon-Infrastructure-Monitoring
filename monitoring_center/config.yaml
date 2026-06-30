@@ -1,5 +1,5 @@
 name: Monitoring Center
-version: "0.3.2"
+version: "0.4.0"
 slug: monitoring_center
 description: Local network and website monitoring center for Home Assistant
 url: https://github.com/local/home-assistant-monitoring
@@ -27,9 +27,8 @@ options:
   retention_days: 30
   default_device_interval: 60
   default_website_interval: 300
-  request_timeout_seconds: 10
-  ping_timeout_seconds: 3
-  max_page_size_kb: 512
+  default_timeout_minutes: 5
+  max_page_size_mb: 5
   block_private_networks: false
   publish_home_assistant_entities: true
   publish_home_assistant_events: true
@@ -41,9 +40,8 @@ schema:
   retention_days: int(1,3650)
   default_device_interval: int(5,86400)
   default_website_interval: int(10,86400)
-  request_timeout_seconds: int(1,120)
-  ping_timeout_seconds: int(1,30)
-  max_page_size_kb: int(16,10240)
+  default_timeout_minutes: float(0,)
+  max_page_size_mb: float(0,)
   block_private_networks: bool
   publish_home_assistant_entities: bool
   publish_home_assistant_events: bool

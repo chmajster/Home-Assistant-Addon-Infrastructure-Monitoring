@@ -9,7 +9,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from ..config import AppConfig
-from .base import CheckResult, MonitorContext, positive_float, positive_int
+from .base import CheckResult, MonitorContext, normalize_timeout_config, positive_int, timeout_seconds_from_config
 
 
 class SslCertificateMonitor:
@@ -24,13 +24,13 @@ class SslCertificateMonitor:
         config["port"] = port
         config["warning_days"] = positive_int(config.get("warning_days"), 30, 1, 3650)
         config["error_days"] = positive_int(config.get("error_days"), 7, 0, 3650)
-        config["timeout_seconds"] = positive_float(config.get("timeout_seconds"), 5.0, 1, 60)
+        normalize_timeout_config(config, app_config.default_timeout_minutes * 60)
         return f"{host}:{port}", config
 
     async def check(self, monitor: dict[str, Any], context: MonitorContext) -> CheckResult:
         try:
             host, port = _host_port(monitor["target"], monitor["config"])
-            timeout = positive_float(monitor["config"].get("timeout_seconds"), 5.0, 1, 60)
+            timeout = timeout_seconds_from_config(monitor["config"], context.config.default_timeout_minutes * 60)
             warning_days = positive_int(monitor["config"].get("warning_days"), 30, 1, 3650)
             error_days = positive_int(monitor["config"].get("error_days"), 7, 0, 3650)
             started = time.perf_counter()

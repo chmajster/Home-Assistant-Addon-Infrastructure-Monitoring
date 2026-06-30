@@ -7,7 +7,7 @@ from typing import Any
 import httpx
 
 from ..config import AppConfig
-from .base import CheckResult, MonitorContext, positive_float
+from .base import CheckResult, MonitorContext, normalize_timeout_config, timeout_seconds_from_config
 
 
 class HomeAssistantEntityMonitor:
@@ -20,7 +20,7 @@ class HomeAssistantEntityMonitor:
         entity_id = target.strip()
         if "." not in entity_id:
             raise ValueError("Home Assistant entity_id is required")
-        config["timeout_seconds"] = positive_float(config.get("timeout_seconds"), 5.0, 1, 60)
+        normalize_timeout_config(config, app_config.default_timeout_minutes * 60)
         alert_states = config.get("alert_states") or ["unavailable", "unknown"]
         config["alert_states"] = alert_states if isinstance(alert_states, list) else str(alert_states).split(",")
         return entity_id, config
@@ -29,7 +29,7 @@ class HomeAssistantEntityMonitor:
         token = os.environ.get("SUPERVISOR_TOKEN")
         if not token:
             return CheckResult("error", error="SUPERVISOR_TOKEN is not available")
-        timeout = positive_float(monitor["config"].get("timeout_seconds"), 5.0, 1, 60)
+        timeout = timeout_seconds_from_config(monitor["config"], context.config.default_timeout_minutes * 60)
         alert_states = [str(item).strip() for item in monitor["config"].get("alert_states", []) if str(item).strip()]
         started = time.perf_counter()
         try:

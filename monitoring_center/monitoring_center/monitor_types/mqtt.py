@@ -5,7 +5,7 @@ import time
 from typing import Any
 
 from ..config import AppConfig
-from .base import CheckResult, MonitorContext, positive_float, positive_int
+from .base import CheckResult, MonitorContext, normalize_timeout_config, positive_float, positive_int, timeout_seconds_from_config
 
 
 class MqttMonitor:
@@ -18,13 +18,13 @@ class MqttMonitor:
         host, port = _host_port(target, config)
         config["host"] = host
         config["port"] = port
-        config["timeout_seconds"] = positive_float(config.get("timeout_seconds"), 5.0, 1, 120)
-        config["topic_timeout_seconds"] = positive_float(config.get("topic_timeout_seconds"), 30.0, 1, 3600)
+        normalize_timeout_config(config, app_config.default_timeout_minutes * 60)
+        config["topic_timeout_seconds"] = positive_float(config.get("topic_timeout_seconds"), 30.0, 1, None)
         return f"{host}:{port}", config
 
     async def check(self, monitor: dict[str, Any], context: MonitorContext) -> CheckResult:
         host, port = _host_port(monitor["target"], monitor["config"])
-        timeout = positive_float(monitor["config"].get("timeout_seconds"), 5.0, 1, 120)
+        timeout = timeout_seconds_from_config(monitor["config"], context.config.default_timeout_minutes * 60)
         topic = str(monitor["config"].get("topic") or "").strip()
         started = time.perf_counter()
         try:
@@ -74,7 +74,7 @@ def _wait_for_topic(host: str, port: int, topic: str, config: dict[str, Any]) ->
     except ImportError as exc:
         raise RuntimeError("paho-mqtt is required for MQTT topic checks") from exc
 
-    timeout = positive_float(config.get("topic_timeout_seconds"), 30.0, 1, 3600)
+    timeout = positive_float(config.get("topic_timeout_seconds"), 30.0, 1, None)
     username = str(config.get("username") or "").strip()
     password = str(config.get("password") or "")
     received: dict[str, str] = {}

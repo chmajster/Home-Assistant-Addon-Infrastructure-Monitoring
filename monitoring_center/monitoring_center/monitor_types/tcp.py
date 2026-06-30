@@ -6,7 +6,7 @@ from typing import Any
 
 from ..config import AppConfig
 from ..validators import validate_device_target
-from .base import CheckResult, MonitorContext, positive_float, positive_int
+from .base import CheckResult, MonitorContext, normalize_timeout_config, positive_int, timeout_seconds_from_config
 
 
 class TcpPortMonitor:
@@ -20,12 +20,12 @@ class TcpPortMonitor:
         validate_device_target(host)
         config["host"] = host
         config["port"] = port
-        config["timeout_seconds"] = positive_float(config.get("timeout_seconds"), 5.0, 0.1, 120.0)
+        normalize_timeout_config(config, app_config.default_timeout_minutes * 60, minimum=0.1)
         return f"{host}:{port}", config
 
     async def check(self, monitor: dict[str, Any], context: MonitorContext) -> CheckResult:
         host, port = _host_port(monitor["target"], monitor["config"])
-        timeout = positive_float(monitor["config"].get("timeout_seconds"), 5.0, 0.1, 120.0)
+        timeout = timeout_seconds_from_config(monitor["config"], context.config.default_timeout_minutes * 60, minimum=0.1)
         started = time.perf_counter()
         try:
             reader, writer = await asyncio.wait_for(asyncio.open_connection(host, port), timeout=timeout)

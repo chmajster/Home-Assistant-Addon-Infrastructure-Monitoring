@@ -17,15 +17,12 @@ configuration:
   default_website_interval:
     name: Default website interval
     description: Default website check interval in seconds.
-  request_timeout_seconds:
-    name: HTTP timeout
-    description: Maximum HTTP request duration in seconds.
-  ping_timeout_seconds:
-    name: Ping timeout
-    description: Maximum ping wait time in seconds.
-  max_page_size_kb:
+  default_timeout_minutes:
+    name: Timeout
+    description: Default monitor timeout in minutes.
+  max_page_size_mb:
     name: Page size limit
-    description: Maximum downloaded page size in KB.
+    description: Maximum downloaded page size in MB.
   block_private_networks:
     name: Block private URL addresses
     description: Blocks URLs resolving to local and private addresses.

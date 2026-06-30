@@ -17,15 +17,12 @@ configuration:
   default_website_interval:
     name: Domyślny interwał stron WWW
     description: Domyślny interwał sprawdzania stron w sekundach.
-  request_timeout_seconds:
-    name: Timeout HTTP
-    description: Maksymalny czas żądania HTTP w sekundach.
-  ping_timeout_seconds:
-    name: Timeout ping
-    description: Maksymalny czas oczekiwania na ping w sekundach.
-  max_page_size_kb:
+  default_timeout_minutes:
+    name: Timeout
+    description: Domyślny timeout monitorów w minutach.
+  max_page_size_mb:
     name: Limit rozmiaru strony
-    description: Maksymalny rozmiar pobieranej strony w KB.
+    description: Maksymalny rozmiar pobieranej strony w MB.
   block_private_networks:
     name: Blokuj prywatne adresy URL
     description: Blokuje URL-e rozwiązujące się do adresów lokalnych i prywatnych.

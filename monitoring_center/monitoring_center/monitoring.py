@@ -212,6 +212,27 @@ class MonitorService:
             await self.run_check(monitor_id)
         return self.get_monitor(monitor_id)
 
+    async def test_monitor(self, payload: dict[str, Any]) -> dict[str, Any]:
+        monitor = self._normalize_payload(payload)
+        test_monitor = {
+            "id": None,
+            "status": "unknown",
+            "last_content_hash": None,
+            "last_changed_at": None,
+            **monitor,
+        }
+        result = await self._check(test_monitor)
+        return {
+            "status": result.status,
+            "success": is_success_status(result.status),
+            "checked_at": utc_now(),
+            "response_ms": result.response_ms,
+            "http_status": result.http_status,
+            "content_hash": result.content_hash,
+            "error": result.error,
+            "details": result.details or {},
+        }
+
     def delete_monitor(self, monitor_id: int) -> None:
         self.db.execute("DELETE FROM monitors WHERE id = ?", (monitor_id,))
         self._last_started.pop(monitor_id, None)
@@ -486,19 +507,29 @@ class MonitorService:
     def get_settings(self) -> dict[str, Any]:
         settings = {
             "retention_days": self.config.retention_days,
-            "request_timeout_seconds": self.config.request_timeout_seconds,
-            "ping_timeout_seconds": self.config.ping_timeout_seconds,
-            "max_page_size_kb": self.config.max_page_size_kb,
+            "default_timeout_minutes": self.config.default_timeout_minutes,
+            "max_page_size_mb": self.config.max_page_size_mb,
             "block_private_networks": self.config.block_private_networks,
             "publish_home_assistant_entities": self.config.publish_home_assistant_entities,
             "publish_home_assistant_events": self.config.publish_home_assistant_events,
             "entity_prefix": self.config.entity_prefix,
         }
+        persisted_keys: set[str] = set()
         for row in self.db.fetchall("SELECT key, value FROM settings"):
+            persisted_keys.add(row["key"])
             settings[row["key"]] = loads_json(row["value"], row["value"])
+        if "default_timeout_minutes" not in persisted_keys:
+            timeout_seconds = settings.get("request_timeout_seconds", settings.get("ping_timeout_seconds", 300))
+            settings["default_timeout_minutes"] = max(_safe_float(timeout_seconds, 300) / 60, 1 / 60)
+        if "max_page_size_mb" not in persisted_keys:
+            settings["max_page_size_mb"] = max(_safe_float(settings.get("max_page_size_kb", 512), 512) / 1024, 1 / 1024)
+        settings.pop("request_timeout_seconds", None)
+        settings.pop("ping_timeout_seconds", None)
+        settings.pop("max_page_size_kb", None)
         return settings
 
     def update_settings(self, payload: dict[str, Any]) -> dict[str, Any]:
+        payload = self._normalize_settings_payload(payload)
         for key, value in payload.items():
             self.db.execute(
                 """
@@ -554,6 +585,23 @@ class MonitorService:
             if hasattr(self.config, key):
                 setattr(self.config, key, value)
 
+    @staticmethod
+    def _normalize_settings_payload(payload: dict[str, Any]) -> dict[str, Any]:
+        normalized = dict(payload)
+        if "default_timeout_minutes" not in normalized:
+            timeout_seconds = normalized.pop("request_timeout_seconds", normalized.pop("ping_timeout_seconds", None))
+            if timeout_seconds is not None:
+                normalized["default_timeout_minutes"] = max(_safe_float(timeout_seconds, 300) / 60, 1 / 60)
+        normalized.pop("request_timeout_seconds", None)
+        normalized.pop("ping_timeout_seconds", None)
+
+        if "max_page_size_mb" not in normalized:
+            max_page_size_kb = normalized.pop("max_page_size_kb", None)
+            if max_page_size_kb is not None:
+                normalized["max_page_size_mb"] = max(_safe_float(max_page_size_kb, 512) / 1024, 1 / 1024)
+        normalized.pop("max_page_size_kb", None)
+        return normalized
+
     def _persist_runtime_details(self, monitor: dict[str, Any], details: dict[str, Any]) -> None:
         config = dict(monitor.get("config") or {})
         changed = False
@@ -588,7 +636,7 @@ class MonitorService:
             """
         )
         return {
-            "version": "0.3.2",
+            "version": "0.4.0",
             "database_path": str(self.config.database_path),
             "database_exists": self.config.database_path.exists(),
             "database_size_bytes": self.config.database_path.stat().st_size if self.config.database_path.exists() else 0,
@@ -605,7 +653,7 @@ class MonitorService:
 
     def _normalize_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
         monitor_type = resolve_type(payload["type"])
-        config = payload.get("config") or {}
+        config = self._normalize_monitor_config(payload.get("config") or {})
         try:
             plugin = get_plugin(monitor_type)
             target, config = plugin.validate(payload["target"], config, self.config)
@@ -622,6 +670,21 @@ class MonitorService:
             "enabled": bool(payload.get("enabled", True)),
             "config": config,
         }
+
+    @staticmethod
+    def _normalize_monitor_config(config: dict[str, Any]) -> dict[str, Any]:
+        normalized = dict(config)
+        if "timeout_minutes" not in normalized and "timeout_seconds" in normalized:
+            try:
+                normalized["timeout_minutes"] = _safe_float(normalized.pop("timeout_seconds"), 300) / 60
+            except (TypeError, ValueError):
+                normalized.pop("timeout_seconds", None)
+        if "max_page_size_mb" not in normalized and "max_page_size_kb" in normalized:
+            try:
+                normalized["max_page_size_mb"] = _safe_float(normalized.pop("max_page_size_kb"), 512) / 1024
+            except (TypeError, ValueError):
+                normalized.pop("max_page_size_kb", None)
+        return normalized
 
     def _ensure_unique_url_monitor(self, monitor: dict[str, Any], exclude_id: int | None = None) -> None:
         if monitor["type"] not in URL_MONITOR_TYPES:
@@ -724,3 +787,10 @@ class MonitorService:
 def _is_future(value: str | None) -> bool:
     parsed = parse_time(value)
     return bool(parsed and parsed > datetime.now(timezone.utc))
+
+
+def _safe_float(value: object, default: float) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default

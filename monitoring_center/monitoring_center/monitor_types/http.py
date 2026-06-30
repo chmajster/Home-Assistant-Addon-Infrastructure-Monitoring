@@ -11,7 +11,7 @@ from bs4 import BeautifulSoup
 
 from ..config import AppConfig
 from ..validators import ensure_public_url_if_required, validate_url
-from .base import CheckResult, MonitorContext, csv_ints, positive_float, positive_int
+from .base import CheckResult, MonitorContext, csv_ints, normalize_timeout_config, positive_float, timeout_seconds_from_config
 
 LOGGER = logging.getLogger(__name__)
 
@@ -24,7 +24,7 @@ class HttpStatusMonitor:
 
     def validate(self, target: str, config: dict[str, Any], app_config: AppConfig) -> tuple[str, dict[str, Any]]:
         config["expected_status_codes"] = csv_ints(config.get("expected_status_codes"), [200])
-        config["timeout_seconds"] = positive_float(config.get("timeout_seconds"), app_config.request_timeout_seconds, 1, 120)
+        normalize_timeout_config(config, app_config.default_timeout_minutes * 60)
         return validate_url(target), config
 
     async def check(self, monitor: dict[str, Any], context: MonitorContext) -> CheckResult:
@@ -39,8 +39,13 @@ class HttpHashMonitor:
 
     def validate(self, target: str, config: dict[str, Any], app_config: AppConfig) -> tuple[str, dict[str, Any]]:
         config["expected_status_codes"] = csv_ints(config.get("expected_status_codes"), [200])
-        config["timeout_seconds"] = positive_float(config.get("timeout_seconds"), app_config.request_timeout_seconds, 1, 120)
-        config["max_page_size_kb"] = positive_int(config.get("max_page_size_kb"), app_config.max_page_size_kb, 16, 10240)
+        normalize_timeout_config(config, app_config.default_timeout_minutes * 60)
+        max_page_size_mb = config.pop("max_page_size_kb", None)
+        if "max_page_size_mb" not in config and max_page_size_mb not in (None, ""):
+            max_page_size_mb = positive_float(max_page_size_mb, app_config.max_page_size_mb * 1024, 1, None) / 1024
+        else:
+            max_page_size_mb = config.get("max_page_size_mb")
+        config["max_page_size_mb"] = positive_float(max_page_size_mb, app_config.max_page_size_mb, 1 / 1024, None)
         return validate_url(target), config
 
     async def check(self, monitor: dict[str, Any], context: MonitorContext) -> CheckResult:
@@ -52,18 +57,19 @@ async def _http_fetch(monitor: dict[str, Any], context: MonitorContext, hash_con
         url = validate_url(monitor["target"])
         ensure_public_url_if_required(url, bool(context.settings["block_private_networks"]))
         expected = csv_ints(monitor["config"].get("expected_status_codes"), [200])
-        timeout = positive_float(
-            monitor["config"].get("timeout_seconds"),
-            float(context.settings["request_timeout_seconds"]),
-            1,
-            120,
+        timeout = timeout_seconds_from_config(
+            monitor["config"],
+            float(context.settings["default_timeout_minutes"]) * 60,
         )
-        max_bytes = positive_int(
-            monitor["config"].get("max_page_size_kb"),
-            int(context.settings["max_page_size_kb"]),
-            16,
-            10240,
-        ) * 1024
+        max_page_size_mb = monitor["config"].get("max_page_size_mb")
+        if max_page_size_mb in (None, "") and monitor["config"].get("max_page_size_kb") not in (None, ""):
+            max_page_size_mb = positive_float(
+                monitor["config"]["max_page_size_kb"],
+                float(context.settings["max_page_size_mb"]) * 1024,
+                1,
+                None,
+            ) / 1024
+        max_bytes = int(positive_float(max_page_size_mb, float(context.settings["max_page_size_mb"]), 1 / 1024, None) * 1024 * 1024)
         started = time.perf_counter()
         async with httpx.AsyncClient(
             follow_redirects=True,

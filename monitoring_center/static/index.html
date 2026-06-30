@@ -12,20 +12,23 @@
         <h1>Monitoring Center</h1>
         <p>Lokalny monitoring urządzeń, stron WWW, historii i zdarzeń Home Assistant.</p>
       </div>
-      <div class="top-actions">
-        <button id="themeBtn" type="button" aria-label="Przełącz motyw">Motyw: jasny</button>
-        <button id="refreshBtn" class="primary">Odśwież</button>
-      </div>
     </header>
 
     <nav class="tabs" aria-label="Sekcje">
-      <button class="tab active" data-tab="dashboard">Dashboard</button>
-      <button class="tab" data-tab="devices">Monitory</button>
-      <button class="tab" data-tab="groups">Grupy</button>
-      <button class="tab" data-tab="websites">Strony WWW</button>
-      <button class="tab" data-tab="history">Historia</button>
-      <button class="tab" data-tab="settings">Ustawienia</button>
-      <button class="tab" data-tab="diagnostics">Diagnostyka</button>
+      <div class="tab-list">
+        <button class="tab active" data-tab="dashboard">Dashboard</button>
+        <button class="tab" data-tab="devices">Monitory</button>
+        <button class="tab" data-tab="groups">Grupy</button>
+        <button class="tab" data-tab="websites">Strony WWW</button>
+        <button class="tab" data-tab="history">Historia</button>
+        <button class="tab" data-tab="settings">Ustawienia</button>
+        <button class="tab" data-tab="diagnostics">Diagnostyka</button>
+      </div>
+      <div class="nav-actions">
+        <button data-open-form="ping_host" class="primary">Dodaj monitor</button>
+        <button id="themeBtn" type="button" aria-label="Przełącz motyw">Motyw: jasny</button>
+        <button id="refreshBtn">Odśwież</button>
+      </div>
     </nav>
 
     <main>
@@ -130,6 +133,7 @@
                 <th>Odpowiedź</th>
                 <th>HTTP</th>
                 <th>Zmiana</th>
+                <th>Suma WWW</th>
                 <th>Szczegóły</th>
                 <th>Błąd</th>
               </tr>
@@ -165,6 +169,7 @@
                 <th>Status</th>
                 <th>Odpowiedź</th>
                 <th>HTTP</th>
+                <th>Suma WWW</th>
                 <th>Utrata</th>
                 <th>Błąd</th>
               </tr>
@@ -179,9 +184,8 @@
           <h2>Ustawienia</h2>
           <form id="settingsForm" class="grid-form">
             <label>Retencja dni<input name="retention_days" type="number" min="1" max="3650" /></label>
-            <label>Timeout HTTP s<input name="request_timeout_seconds" type="number" min="1" max="120" /></label>
-            <label>Timeout ping s<input name="ping_timeout_seconds" type="number" min="1" max="30" /></label>
-            <label>Limit strony KB<input name="max_page_size_kb" type="number" min="16" max="10240" /></label>
+            <label>Timeout min<input name="default_timeout_minutes" type="number" min="0.01" step="0.01" /></label>
+            <label>Limit strony MB<input name="max_page_size_mb" type="number" min="0.01" step="0.01" /></label>
             <label>Prefix encji<input name="entity_prefix" maxlength="64" /></label>
             <label class="check"><input name="block_private_networks" type="checkbox" /> Blokuj prywatne adresy dla URL</label>
             <label class="check"><input name="publish_home_assistant_entities" type="checkbox" /> Publikuj encje Home Assistant</label>
@@ -237,7 +241,7 @@
         <div id="websiteOptions" class="nested type-options">
           <label>Selektor CSS<input name="css_selector" placeholder="np. main article" /></label>
           <label>Ignorowane regexy<textarea name="ignore_patterns" rows="4" placeholder="Jedna reguła na linię"></textarea></label>
-          <label>Limit strony KB<input name="max_page_size_kb" type="number" min="16" max="10240" /></label>
+          <label>Limit strony MB<input name="max_page_size_mb" type="number" min="0.01" step="0.01" /></label>
         </div>
         <div id="dnsOptions" class="nested type-options">
           <label>Typ rekordu<select name="record_type"><option>A</option><option>AAAA</option><option>CNAME</option><option>MX</option><option>TXT</option></select></label>
@@ -259,13 +263,35 @@
           <label>Host/IP brokera<input name="mqtt_host" placeholder="192.168.1.60" /></label>
           <label>Port MQTT<input name="mqtt_port" type="number" min="1" max="65535" placeholder="1883" /></label>
           <label>Topic<input name="topic" placeholder="home/status" /></label>
-          <label>Timeout topicu s<input name="topic_timeout_seconds" type="number" min="1" max="3600" /></label>
+          <label>Timeout topicu s<input name="topic_timeout_seconds" type="number" min="1" /></label>
         </div>
-        <label>Timeout s<input name="timeout_seconds" type="number" min="1" max="120" /></label>
+        <label>Timeout min<input name="timeout_minutes" type="number" min="0.01" step="0.01" /></label>
         <label class="check"><input name="test_on_save" type="checkbox" checked /> Testuj przy zapisie</label>
+        <div id="monitorTestResult" class="test-result hidden" role="status"></div>
         <menu>
           <button value="cancel">Anuluj</button>
+          <button id="testMonitorBtn" value="default" type="button">Sprawdź teraz</button>
           <button id="saveMonitorBtn" value="default" class="primary">Zapisz</button>
+        </menu>
+      </form>
+    </dialog>
+
+    <dialog id="maintenanceDialog">
+      <form id="maintenanceForm" method="dialog">
+        <input type="hidden" name="id" />
+        <h2 id="maintenanceDialogTitle">Serwis</h2>
+        <p id="maintenanceTarget"></p>
+        <label>Data do kiedy<input name="until" type="datetime-local" /></label>
+        <div class="quick-actions" aria-label="Szybkie tryby serwisu">
+          <button type="button" data-maint-duration="30">30 min</button>
+          <button type="button" data-maint-duration="120">2h</button>
+          <button type="button" data-maint-duration="1440">24h</button>
+        </div>
+        <label>Powód<input name="reason" maxlength="500" placeholder="Opcjonalnie" /></label>
+        <menu>
+          <button value="cancel">Anuluj</button>
+          <button id="maintenanceClearBtn" type="button">Wyłącz serwis</button>
+          <button class="primary" value="default">Zapisz</button>
         </menu>
       </form>
     </dialog>
