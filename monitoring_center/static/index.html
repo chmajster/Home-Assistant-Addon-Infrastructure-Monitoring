@@ -19,7 +19,6 @@
         <button class="tab active" data-tab="dashboard">Dashboard</button>
         <button class="tab" data-tab="devices">Monitory</button>
         <button class="tab" data-tab="groups">Grupy</button>
-        <button class="tab" data-tab="websites">Strony WWW</button>
         <button class="tab" data-tab="history">Historia</button>
         <button class="tab" data-tab="settings">Ustawienia</button>
         <button class="tab" data-tab="diagnostics">Diagnostyka</button>
@@ -33,6 +32,9 @@
 
     <main>
       <section id="dashboard" class="view active">
+        <section class="panel filters">
+          <label>Typ monitora<select id="dashboardTypeFilter"></select></label>
+        </section>
         <div class="metrics">
           <article><span id="metricTotal">0</span><small>Monitorów</small></article>
           <article><span id="metricOnline">0</span><small>Online</small></article>
@@ -62,14 +64,22 @@
 
       <section id="devices" class="view">
         <div class="section-head">
-          <h2>Monitory</h2>
-          <button data-open-form="ping_host" class="primary">Dodaj monitor</button>
+          <div>
+            <h2>Monitory</h2>
+            <p id="monitorCountLabel">0 z 0</p>
+          </div>
+          <div class="actions compact-actions">
+            <button data-open-form="http_hash">Dodaj stronę</button>
+            <button data-open-form="ping_host" class="primary">Dodaj monitor</button>
+          </div>
         </div>
         <section class="panel filters">
+          <label>Typ monitora<select id="monitorTypeFilter"></select></label>
+          <label>Filtr<input id="monitorSearch" placeholder="Nazwa, host, URL, status" /></label>
           <label>Preset<select id="presetSelect"><option value="">Wybierz preset</option></select></label>
           <button id="applyPresetBtn">Skopiuj preset</button>
         </section>
-        <div id="deviceList" class="cards"></div>
+        <div id="monitorList" class="cards"></div>
       </section>
 
       <section id="groups" class="view">
@@ -86,18 +96,6 @@
           </form>
         </section>
         <div id="groupList" class="cards"></div>
-      </section>
-
-      <section id="websites" class="view">
-        <div class="section-head">
-          <h2>Strony WWW</h2>
-          <button data-open-form="http_hash" class="primary">Dodaj stronę</button>
-        </div>
-        <section class="panel filters">
-          <label>Filtr URL lub nazwa<input id="websiteSearch" placeholder="https://example.com" /></label>
-          <label class="check"><input id="websiteUniqueOnly" type="checkbox" checked /> Ukryj duplikaty URL</label>
-        </section>
-        <div id="websiteList" class="cards"></div>
       </section>
 
       <section id="monitorDetail" class="view">
@@ -141,7 +139,7 @@
             <tbody id="detailHistoryRows"></tbody>
           </table>
         </section>
-        <section class="panel">
+        <section id="detailSnapshotsSection" class="panel">
           <div class="section-head">
             <h2>Zmiany zawartości</h2>
             <button id="detailSnapshotsBtn">Pokaż diff</button>

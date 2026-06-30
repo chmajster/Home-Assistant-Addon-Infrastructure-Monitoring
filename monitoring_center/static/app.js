@@ -7,12 +7,16 @@ const state = {
   settings: null,
   selectedMonitorId: null,
   currentTest: null,
-  websiteQuery: "",
-  websiteUniqueOnly: true,
+  monitorQuery: "",
+  monitorTypeFilter: "all",
+  dashboardTypeFilter: "all",
 };
 
 const API_BASE = window.location.pathname === "/" ? "" : window.location.pathname.replace(/\/$/, "");
 const URL_MONITOR_TYPES = ["http_status", "http_hash", "rest_api"];
+const WEBSITE_MONITOR_TYPES = URL_MONITOR_TYPES;
+const DEVICE_MONITOR_TYPES = ["ping_host", "tcp_port", "mqtt_monitor"];
+const HA_MONITOR_TYPES = ["ha_entity"];
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
@@ -36,7 +40,7 @@ function bindNavigation() {
   });
   $("#refreshBtn").addEventListener("click", refreshAll);
   $("#themeBtn").addEventListener("click", toggleTheme);
-  $("#detailBackBtn").addEventListener("click", () => showView("websites"));
+  $("#detailBackBtn").addEventListener("click", () => showView("devices"));
   $("#testBackBtn").addEventListener("click", backFromMonitorTest);
   $("#testRepeatBtn").addEventListener("click", () => {
     if (state.currentTest?.monitorId) startMonitorTestRun(state.currentTest.monitorId, state.currentTest.returnView);
@@ -81,13 +85,17 @@ function bindForms() {
   });
   $("#exportBtn").addEventListener("click", exportConfig);
   $("#importFile").addEventListener("change", importConfig);
-  $("#websiteSearch").addEventListener("input", (event) => {
-    state.websiteQuery = event.currentTarget.value.trim().toLowerCase();
+  $("#monitorSearch").addEventListener("input", (event) => {
+    state.monitorQuery = event.currentTarget.value.trim().toLowerCase();
     renderMonitorLists();
   });
-  $("#websiteUniqueOnly").addEventListener("change", (event) => {
-    state.websiteUniqueOnly = event.currentTarget.checked;
+  $("#monitorTypeFilter").addEventListener("change", (event) => {
+    state.monitorTypeFilter = event.currentTarget.value;
     renderMonitorLists();
+  });
+  $("#dashboardTypeFilter").addEventListener("change", (event) => {
+    state.dashboardTypeFilter = event.currentTarget.value;
+    renderDashboard();
   });
 }
 
@@ -106,6 +114,7 @@ async function refreshAll() {
   state.settings = settings;
   state.monitorTypes = monitorTypes;
   state.presets = presets;
+  renderCategoryFilterOptions();
   renderDashboard();
   renderMonitorTypeOptions();
   renderPresetOptions();
@@ -176,24 +185,32 @@ function showView(viewId, activeTab = viewId) {
 
 function renderDashboard() {
   const summary = state.summary || {};
-  $("#metricTotal").textContent = summary.total ?? 0;
-  $("#metricOnline").textContent = summary.online ?? 0;
-  $("#metricOffline").textContent = summary.offline ?? 0;
-  $("#metricChanged").textContent = summary.changed_websites ?? 0;
-  $("#metricAvg").textContent = summary.avg_response_ms ? `${summary.avg_response_ms} ms` : "-";
-  renderList("#recentFailures", summary.recent_failures || [], checkLine);
-  renderRecentChanges(summary.recent_changes || []);
+  const monitors = filterMonitorsByCategory(state.monitors, state.dashboardTypeFilter);
+  const monitorIds = new Set(monitors.map((monitor) => monitor.id));
+  const recentFailures = (summary.recent_failures || []).filter((row) => monitorIds.has(row.monitor_id));
+  const recentChanges = (summary.recent_changes || []).filter((row) => monitorIds.has(row.monitor_id));
+  const responseTimes = monitors
+    .map((monitor) => monitor.last_response_ms)
+    .filter((value) => value !== null && value !== undefined);
+  $("#metricTotal").textContent = monitors.length;
+  $("#metricOnline").textContent = monitors.filter((monitor) => isSuccessStatus(monitor.status)).length;
+  $("#metricOffline").textContent = monitors.filter((monitor) => !isSuccessStatus(monitor.status)).length;
+  $("#metricChanged").textContent = recentChanges.length;
+  $("#metricAvg").textContent = responseTimes.length ? `${average(responseTimes).toFixed(1)} ms` : "-";
+  renderList("#recentFailures", recentFailures, checkLine);
+  renderRecentChanges(recentChanges);
   renderAvailabilityChart();
   renderSlo(summary.slo || {});
 }
 
 function renderAvailabilityChart() {
   const root = $("#availabilityChart");
-  if (!state.monitors.length) {
+  const monitors = filterMonitorsByCategory(state.monitors, state.dashboardTypeFilter);
+  if (!monitors.length) {
     root.innerHTML = '<p class="empty">Brak monitorów</p>';
     return;
   }
-  root.innerHTML = state.monitors.map((monitor) => {
+  root.innerHTML = monitors.map((monitor) => {
     const down = isSuccessStatus(monitor.status) ? "0%" : "100%";
     return `<div class="bar" style="--down:${down}" title="${escapeHtml(monitor.name)}">
       <strong>${escapeHtml(monitor.name)}</strong><br>${escapeHtml(monitor.status)}
@@ -202,9 +219,40 @@ function renderAvailabilityChart() {
 }
 
 function renderMonitorLists() {
-  renderCards("#deviceList", state.monitors.filter((m) => !["http_status", "http_hash", "ssl_certificate", "rest_api"].includes(m.type)));
-  const websites = state.monitors.filter((m) => ["http_status", "http_hash", "ssl_certificate", "rest_api"].includes(m.type));
-  renderCards("#websiteList", filterWebsiteMonitors(websites), { details: true, websiteActions: true });
+  const filtered = filterMonitorsForList(state.monitors);
+  $("#monitorCountLabel").textContent = `${filtered.length} z ${state.monitors.length}`;
+  renderCards("#monitorList", filtered, { details: true });
+}
+
+function renderCategoryFilterOptions() {
+  const options = monitorCategoryOptions();
+  [
+    ["#monitorTypeFilter", "monitorTypeFilter"],
+    ["#dashboardTypeFilter", "dashboardTypeFilter"],
+  ].forEach(([selector, stateKey]) => {
+    const select = $(selector);
+    if (!select) return;
+    const current = state[stateKey];
+    const next = options.some((option) => option.value === current) ? current : "all";
+    state[stateKey] = next;
+    select.innerHTML = options
+      .map((option) => `<option value="${option.value}">${escapeHtml(option.label)}</option>`)
+      .join("");
+    select.value = next;
+  });
+}
+
+function monitorCategoryOptions() {
+  const options = [
+    { value: "all", label: "Wszystkie" },
+    { value: "devices", label: "Urządzenia" },
+    { value: "websites", label: "Strony WWW" },
+    { value: "ha", label: "Home Assistant" },
+  ];
+  if (state.monitors.some((monitor) => monitorCategory(monitor) === "other")) {
+    options.push({ value: "other", label: "Inne" });
+  }
+  return options;
 }
 
 function renderMonitorTypeOptions() {
@@ -318,21 +366,35 @@ function buildMonitorConfig(form, type) {
   return config;
 }
 
-function filterWebsiteMonitors(monitors) {
-  const filtered = state.websiteQuery
-    ? monitors.filter((monitor) => {
-        const haystack = `${monitor.name} ${monitor.target} ${typeLabel(monitor.type)}`.toLowerCase();
-        return haystack.includes(state.websiteQuery);
-      })
-    : monitors;
-  if (!state.websiteUniqueOnly) return filtered;
-  const seen = new Set();
-  return filtered.filter((monitor) => {
-    const key = normalizeUrlKey(monitor.target);
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
+function filterMonitorsForList(monitors) {
+  const byCategory = filterMonitorsByCategory(monitors, state.monitorTypeFilter);
+  if (!state.monitorQuery) return byCategory;
+  return byCategory.filter((monitor) => {
+    const config = monitor.config || {};
+    const haystack = [
+      monitor.name,
+      monitor.target,
+      monitor.status,
+      monitor.group_name,
+      typeLabel(monitor.type),
+      config.host,
+      config.topic,
+      config.json_path,
+    ].filter(Boolean).join(" ").toLowerCase();
+    return haystack.includes(state.monitorQuery);
   });
+}
+
+function filterMonitorsByCategory(monitors, category) {
+  if (!category || category === "all") return monitors;
+  return monitors.filter((monitor) => monitorCategory(monitor) === category);
+}
+
+function monitorCategory(monitor) {
+  if (WEBSITE_MONITOR_TYPES.includes(monitor.type)) return "websites";
+  if (DEVICE_MONITOR_TYPES.includes(monitor.type)) return "devices";
+  if (HA_MONITOR_TYPES.includes(monitor.type)) return "ha";
+  return "other";
 }
 
 function normalizeUrlKey(target) {
@@ -363,19 +425,10 @@ function renderCards(selector, monitors, options = {}) {
         <span class="badge ${monitor.enabled ? badgeClass(monitor.status) : "unknown"}">${monitor.enabled ? escapeHtml(monitor.status) : "nieaktywny"}</span>
       </div>
       <div class="meta">
-        <span>Interwał: ${monitor.interval_seconds}s</span>
-        <span>Aktywny: ${monitor.enabled ? "tak" : "nie"}</span>
-        <span>Typ: ${escapeHtml(typeLabel(monitor.type))}</span>
-        <span>Grupa: ${escapeHtml(monitor.group_name || "Bez grupy")}</span>
-        <span>Maintenance: ${monitor.maintenance_active ? "aktywny do " + formatDate(monitor.maintenance_until || monitor.group_maintenance_until) : "-"}</span>
-        <span>Odpowiedź: ${monitor.last_response_ms ? Number(monitor.last_response_ms).toFixed(1) + " ms" : "-"}</span>
-        <span>HTTP: ${monitor.last_http_status || "-"}</span>
-        <span>Ostatni test: ${formatDate(monitor.last_checked_at)}</span>
-        ${monitor.type === "http_hash" ? `<span>Suma WWW: ${hashHtml(monitor.last_content_hash)}</span>` : ""}
-        <span>Błąd: ${escapeHtml(monitor.last_error || "-")}</span>
+        ${renderMonitorMeta(monitor)}
       </div>
       <div class="actions">
-        ${renderCardActions(monitor, options)}
+        ${renderCardActions(monitor)}
       </div>
     </article>
   `).join("");
@@ -395,27 +448,64 @@ function renderCards(selector, monitors, options = {}) {
   }
 }
 
-function renderCardActions(monitor, options = {}) {
-  if (options.websiteActions) {
-    return `
-      <button data-action="check" data-id="${monitor.id}">Test</button>
-      <button data-action="edit" data-id="${monitor.id}">Edytuj</button>
-      <button data-action="maintenance" data-id="${monitor.id}">Serwis</button>
-      <button data-action="toggle-enabled" data-id="${monitor.id}">${monitor.enabled ? "Wyłącz monitoring" : "Włącz monitoring"}</button>
-      ${monitor.type === "http_hash" ? `<button data-action="snapshots" data-id="${monitor.id}">Zmiany</button>` : ""}
-      <button data-action="delete" data-id="${monitor.id}" class="danger-action">Usuń</button>
-    `;
+function renderMonitorMeta(monitor) {
+  const config = monitor.config || {};
+  const rows = [
+    ["Typ", typeLabel(monitor.type)],
+    ["Grupa", monitor.group_name || "Bez grupy"],
+    ["Interwał", `${monitor.interval_seconds}s`],
+    ["Aktywny", monitor.enabled ? "tak" : "nie"],
+    ["Serwis", monitor.maintenance_active ? `aktywny do ${formatDate(monitor.maintenance_until || monitor.group_maintenance_until)}` : "-"],
+    ["Ostatni test", formatDate(monitor.last_checked_at)],
+  ];
+  if (monitorCategory(monitor) === "websites") {
+    rows.splice(1, 0,
+      ["URL", monitor.target],
+      ["HTTP status", monitor.last_http_status || "-"],
+      ["Czas odpowiedzi", monitor.last_response_ms ? `${Number(monitor.last_response_ms).toFixed(1)} ms` : "-"],
+      ["Tryb WWW", typeLabel(monitor.type)],
+    );
+    if (monitor.type === "http_hash") rows.push(["Suma WWW", hashHtml(monitor.last_content_hash)]);
+    rows.push(["Ostatni błąd", monitor.last_error || "-"]);
+  } else if (monitorCategory(monitor) === "devices") {
+    rows.splice(1, 0,
+      ["IP / host", config.host || monitor.target],
+      ["Ping / odpowiedź", monitor.last_response_ms ? `${Number(monitor.last_response_ms).toFixed(1)} ms` : "-"],
+      ["Status", monitor.enabled ? monitor.status : "nieaktywny"],
+    );
+    if (config.port) rows.push(["Port", config.port]);
+    if (config.topic) rows.push(["Topic", config.topic]);
+    rows.push(["Ostatni błąd", monitor.last_error || "-"]);
+  } else if (monitorCategory(monitor) === "ha") {
+    rows.splice(1, 0,
+      ["Entity ID", monitor.target],
+      ["Stan HA", config.last_ha_state || "-"],
+      ["Status", monitor.status || "-"],
+    );
+    rows.push(["Stany alarmowe", (config.alert_states || []).join(", ") || "-"]);
+    rows.push(["Ostatni błąd", monitor.last_error || "-"]);
+  } else {
+    rows.splice(1, 0,
+      ["Cel", monitor.target],
+      ["Status", monitor.status || "-"],
+      ["Odpowiedź", monitor.last_response_ms ? `${Number(monitor.last_response_ms).toFixed(1)} ms` : "-"],
+    );
+    rows.push(["Ostatni błąd", monitor.last_error || "-"]);
   }
+  return rows.map(([label, value]) => {
+    const renderedValue = label === "Suma WWW" ? value : escapeHtml(value);
+    return `<span>${escapeHtml(label)}: ${renderedValue}</span>`;
+  }).join("");
+}
+
+function renderCardActions(monitor) {
   return `
     <button data-action="check" data-id="${monitor.id}">Test</button>
-    <button data-action="toggle-enabled" data-id="${monitor.id}">${monitor.enabled ? "Wyłącz" : "Włącz"}</button>
     <button data-action="edit" data-id="${monitor.id}">Edytuj</button>
-    <button data-action="maint-30" data-id="${monitor.id}">Serwis 30m</button>
-    <button data-action="maint-120" data-id="${monitor.id}">Serwis 2h</button>
-    <button data-action="maint-manual" data-id="${monitor.id}">Serwis ręczny</button>
-    ${monitor.maintenance_until ? `<button data-action="maint-clear" data-id="${monitor.id}">Wyłącz serwis</button>` : ""}
+    <button data-action="maintenance" data-id="${monitor.id}">Serwis</button>
+    <button data-action="toggle-enabled" data-id="${monitor.id}">${monitor.enabled ? "Wyłącz monitoring" : "Włącz monitoring"}</button>
     ${monitor.type === "http_hash" ? `<button data-action="snapshots" data-id="${monitor.id}">Zmiany</button>` : ""}
-    <button data-action="delete" data-id="${monitor.id}">Usuń</button>
+    <button data-action="delete" data-id="${monitor.id}" class="danger-action">Usuń</button>
   `;
 }
 
@@ -503,7 +593,7 @@ function backFromMonitorTest() {
 }
 
 function monitorReturnView(monitor) {
-  return ["http_status", "http_hash", "ssl_certificate", "rest_api"].includes(monitor.type) ? "websites" : "devices";
+  return "devices";
 }
 
 function startTestRunTimer() {
@@ -634,7 +724,7 @@ function formatDuration(ms) {
 
 async function showMonitorDetails(id) {
   state.selectedMonitorId = id;
-  showView("monitorDetail", "websites");
+  showView("monitorDetail", "devices");
   renderMonitorDetailsShell(id);
   const monitor = state.monitors.find((item) => item.id === id);
   if (!monitor) return;
@@ -657,6 +747,7 @@ function renderMonitorDetailsShell(id) {
   }
   $("#detailTitle").textContent = monitor.name;
   $("#detailSubtitle").textContent = `${typeLabel(monitor.type)} · ${monitor.target}`;
+  $("#detailSnapshotsSection").classList.toggle("hidden", monitor.type !== "http_hash");
   $("#detailMetrics").innerHTML = [
     ["Status", `<span class="badge ${badgeClass(monitor.status)}">${escapeHtml(monitor.status)}</span>`],
     ["Odpowiedź", monitor.last_response_ms ? `${Number(monitor.last_response_ms).toFixed(1)} ms` : "-"],
@@ -1327,6 +1418,10 @@ function typeLabel(type) {
 
 function isSuccessStatus(status) {
   return ["online", "ok", "open", "warning"].includes(status);
+}
+
+function average(values) {
+  return values.reduce((sum, value) => sum + Number(value), 0) / values.length;
 }
 
 function startOfLocalDay(value) {
