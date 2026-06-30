@@ -150,6 +150,52 @@
         </section>
       </section>
 
+      <section id="monitorTestRun" class="view">
+        <div class="section-head">
+          <div>
+            <h2 id="testRunTitle">Test monitora</h2>
+            <p id="testRunSubtitle"></p>
+          </div>
+          <div class="actions compact-actions">
+            <button id="testBackBtn">Wróć</button>
+            <button id="testEditBtn">Edytuj</button>
+            <button id="testRepeatBtn" class="primary">Test ponownie</button>
+          </div>
+        </div>
+        <section class="panel test-run-hero">
+          <div>
+            <div id="testRunState" class="run-state"></div>
+            <h2>Aktualny test</h2>
+          </div>
+          <dl class="run-timing">
+            <div><dt>Czas</dt><dd id="testRunElapsed">0:00</dd></div>
+            <div><dt>Start</dt><dd id="testRunStarted">-</dd></div>
+            <div><dt>Koniec</dt><dd id="testRunFinished">-</dd></div>
+          </dl>
+        </section>
+        <div id="testRunMetrics" class="metrics detail-metrics"></div>
+        <div class="split">
+          <section class="panel">
+            <h2>Ustawienia monitoringu</h2>
+            <dl id="testRunSettings" class="diagnostics"></dl>
+          </section>
+          <section class="panel">
+            <h2>Zakres testu</h2>
+            <dl id="testRunScope" class="diagnostics"></dl>
+          </section>
+        </div>
+        <div class="split">
+          <section class="panel">
+            <h2>Przebieg</h2>
+            <div id="testRunSteps" class="run-steps"></div>
+          </section>
+          <section class="panel">
+            <h2>Wynik</h2>
+            <div id="testRunResult" class="list"></div>
+          </section>
+        </div>
+      </section>
+
       <section id="history" class="view">
         <section class="panel filters">
           <label>Monitor<select id="historyMonitor"><option value="">Wszystkie</option></select></label>

@@ -6,6 +6,7 @@ const state = {
   summary: null,
   settings: null,
   selectedMonitorId: null,
+  currentTest: null,
   websiteQuery: "",
   websiteUniqueOnly: true,
 };
@@ -15,6 +16,7 @@ const URL_MONITOR_TYPES = ["http_status", "http_hash", "rest_api"];
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
+let testRunTimer;
 
 document.addEventListener("DOMContentLoaded", () => {
   initTheme();
@@ -35,16 +37,21 @@ function bindNavigation() {
   $("#refreshBtn").addEventListener("click", refreshAll);
   $("#themeBtn").addEventListener("click", toggleTheme);
   $("#detailBackBtn").addEventListener("click", () => showView("websites"));
+  $("#testBackBtn").addEventListener("click", backFromMonitorTest);
+  $("#testRepeatBtn").addEventListener("click", () => {
+    if (state.currentTest?.monitorId) startMonitorTestRun(state.currentTest.monitorId, state.currentTest.returnView);
+  });
+  $("#testEditBtn").addEventListener("click", () => {
+    const monitor = state.monitors.find((item) => item.id === state.currentTest?.monitorId);
+    if (monitor) openMonitorForm(monitor);
+  });
   $("#detailEditBtn").addEventListener("click", () => {
     const monitor = state.monitors.find((item) => item.id === state.selectedMonitorId);
     if (monitor) openMonitorForm(monitor);
   });
   $("#detailCheckBtn").addEventListener("click", async () => {
     if (!state.selectedMonitorId) return;
-    await api(`/api/monitors/${state.selectedMonitorId}/check`, { method: "POST" });
-    toast("Test monitora zakończony.");
-    await refreshAll();
-    await showMonitorDetails(state.selectedMonitorId);
+    await startMonitorTestRun(state.selectedMonitorId, "monitorDetail");
   });
   $("#detailSnapshotsBtn").addEventListener("click", () => {
     if (state.selectedMonitorId) showSnapshots(state.selectedMonitorId);
@@ -109,6 +116,9 @@ async function refreshAll() {
   renderSettings();
   if ($("#monitorDetail").classList.contains("active") && state.selectedMonitorId) {
     renderMonitorDetailsShell(state.selectedMonitorId);
+  }
+  if ($("#monitorTestRun").classList.contains("active") && state.currentTest?.monitorId) {
+    renderMonitorTestRun();
   }
 }
 
@@ -415,9 +425,7 @@ async function handleCardAction(event) {
   const monitor = state.monitors.find((item) => item.id === id);
   if (!monitor) return;
   if (action === "check") {
-    await api(`/api/monitors/${id}/check`, { method: "POST" });
-    toast("Test monitora zakończony.");
-    refreshAll();
+    await startMonitorTestRun(id, monitorReturnView(monitor));
   }
   if (action === "toggle-enabled") {
     await api(`/api/monitors/${id}`, {
@@ -439,6 +447,189 @@ async function handleCardAction(event) {
     refreshAll();
   }
   if (action === "snapshots") showSnapshots(id);
+}
+
+async function startMonitorTestRun(id, returnView = "devices") {
+  const monitor = state.monitors.find((item) => item.id === id);
+  if (!monitor) return;
+  state.currentTest = {
+    monitorId: id,
+    returnView,
+    returnTab: monitorReturnView(monitor),
+    status: "running",
+    startedAt: new Date().toISOString(),
+    finishedAt: null,
+    result: null,
+    error: null,
+  };
+  showView("monitorTestRun", state.currentTest.returnTab);
+  renderMonitorTestRun();
+  startTestRunTimer();
+  try {
+    const result = await api(`/api/monitors/${id}/check`, { method: "POST" });
+    state.currentTest = {
+      ...state.currentTest,
+      status: "done",
+      finishedAt: new Date().toISOString(),
+      result,
+    };
+    state.monitors = state.monitors.map((item) => item.id === id ? { ...item, ...result } : item);
+    await refreshAll();
+    toast("Test monitora zakończony.");
+  } catch (error) {
+    state.currentTest = {
+      ...state.currentTest,
+      status: "error",
+      finishedAt: new Date().toISOString(),
+      error: error.message,
+    };
+  } finally {
+    stopTestRunTimer();
+    renderMonitorTestRun();
+  }
+}
+
+function backFromMonitorTest() {
+  const test = state.currentTest;
+  if (!test) {
+    showView("devices");
+    return;
+  }
+  if (test.returnView === "monitorDetail" && test.monitorId) {
+    showMonitorDetails(test.monitorId);
+    return;
+  }
+  showView(test.returnView || test.returnTab || "devices");
+}
+
+function monitorReturnView(monitor) {
+  return ["http_status", "http_hash", "ssl_certificate", "rest_api"].includes(monitor.type) ? "websites" : "devices";
+}
+
+function startTestRunTimer() {
+  stopTestRunTimer();
+  testRunTimer = setInterval(renderMonitorTestRun, 1000);
+}
+
+function stopTestRunTimer() {
+  if (!testRunTimer) return;
+  clearInterval(testRunTimer);
+  testRunTimer = null;
+}
+
+function renderMonitorTestRun() {
+  const test = state.currentTest;
+  if (!test) return;
+  const monitor = state.monitors.find((item) => item.id === test.monitorId) || test.result;
+  if (!monitor) return;
+  const isRunning = test.status === "running";
+  const elapsedUntil = test.finishedAt || new Date().toISOString();
+  const result = test.result || monitor;
+  $("#testRunTitle").textContent = monitor.name;
+  $("#testRunSubtitle").textContent = `${typeLabel(monitor.type)} · ${monitor.target}`;
+  $("#testRunState").innerHTML = `
+    <span class="run-dot ${isRunning ? "running" : test.status}"></span>
+    <span>${testStatusLabel(test.status)}</span>
+  `;
+  $("#testRunElapsed").textContent = formatDuration(new Date(elapsedUntil) - new Date(test.startedAt));
+  $("#testRunStarted").textContent = formatDate(test.startedAt);
+  $("#testRunFinished").textContent = test.finishedAt ? formatDate(test.finishedAt) : "-";
+  $("#testRepeatBtn").disabled = isRunning;
+  $("#testEditBtn").disabled = isRunning;
+  $("#testRunMetrics").innerHTML = [
+    ["Status", `<span class="badge ${badgeClass(result.status)}">${escapeHtml(result.status || "unknown")}</span>`],
+    ["Odpowiedź", result.last_response_ms ? `${Number(result.last_response_ms).toFixed(1)} ms` : "-"],
+    ["HTTP", result.last_http_status || "-"],
+    ["Ostatni test", formatDate(result.last_checked_at)],
+  ].map(([label, value]) => `<article><span>${value}</span><small>${label}</small></article>`).join("");
+  $("#testRunSettings").innerHTML = monitorSettingsRows(monitor);
+  $("#testRunScope").innerHTML = monitorScopeRows(monitor);
+  $("#testRunSteps").innerHTML = renderTestSteps(test);
+  $("#testRunResult").innerHTML = renderTestResultSummary(test, result);
+}
+
+function monitorSettingsRows(monitor) {
+  const config = monitor.config || {};
+  const rows = {
+    "Typ": typeLabel(monitor.type),
+    "Grupa": monitor.group_name || "Bez grupy",
+    "Aktywny": monitor.enabled ? "tak" : "nie",
+    "Interwał": `${monitor.interval_seconds}s`,
+    "Timeout": getTimeoutMinutes(config) ? `${getTimeoutMinutes(config)} min` : `${state.settings?.default_timeout_minutes ?? "-"} min`,
+    "Serwis": monitor.maintenance_active ? `aktywny do ${formatDate(monitor.maintenance_until || monitor.group_maintenance_until)}` : "-",
+    "Retencja historii": `${state.settings?.retention_days ?? "-"} dni`,
+    "Blokada prywatnych URL": state.settings?.block_private_networks ? "tak" : "nie",
+    "Encje Home Assistant": state.settings?.publish_home_assistant_entities ? "tak" : "nie",
+    "Eventy Home Assistant": state.settings?.publish_home_assistant_events ? "tak" : "nie",
+  };
+  return definitionRows(rows);
+}
+
+function monitorScopeRows(monitor) {
+  const config = monitor.config || {};
+  const rows = {
+    "Cel": monitor.target,
+    "Oczekiwane HTTP": (config.expected_status_codes || []).join(", ") || "-",
+    "Selektor CSS": config.css_selector || "-",
+    "JSON path": config.json_path || "-",
+    "Host": config.host || "-",
+    "Port": config.port || "-",
+    "Limit strony": getMaxPageSizeMb(config) ? `${getMaxPageSizeMb(config)} MB` : `${state.settings?.max_page_size_mb ?? "-"} MB`,
+  };
+  return definitionRows(rows);
+}
+
+function renderTestSteps(test) {
+  const steps = [
+    ["Przygotowanie", "done"],
+    ["Wykonanie testu", test.status === "running" ? "running" : test.status === "error" ? "error" : "done"],
+    ["Zapis historii i stanu", test.status === "running" ? "pending" : test.status === "error" ? "pending" : "done"],
+    ["Zakończenie", test.status === "done" ? "done" : test.status === "error" ? "error" : "pending"],
+  ];
+  return steps.map(([label, status]) => `
+    <div class="run-step ${status}">
+      <span class="run-dot ${status}"></span>
+      <strong>${label}</strong>
+    </div>
+  `).join("");
+}
+
+function renderTestResultSummary(test, result) {
+  if (test.status === "running") {
+    return '<p class="empty">Test jest w toku. Wynik pojawi się automatycznie po odpowiedzi monitora.</p>';
+  }
+  if (test.status === "error") {
+    return `<div class="test-result bad">Błąd uruchomienia testu: ${escapeHtml(test.error || "-")}</div>`;
+  }
+  const rows = {
+    "Status": result.status || "-",
+    "Czas odpowiedzi": result.last_response_ms ? `${Number(result.last_response_ms).toFixed(1)} ms` : "-",
+    "HTTP": result.last_http_status || "-",
+    "Suma WWW": result.last_content_hash || "-",
+    "Błąd": result.last_error || "-",
+  };
+  return `<dl class="diagnostics">${definitionRows(rows)}</dl>`;
+}
+
+function definitionRows(rows) {
+  return Object.entries(rows)
+    .filter(([, value]) => value !== undefined && value !== null && value !== "")
+    .map(([key, value]) => `<dt>${escapeHtml(key)}</dt><dd>${escapeHtml(String(value))}</dd>`)
+    .join("");
+}
+
+function testStatusLabel(status) {
+  if (status === "running") return "Test w trakcie";
+  if (status === "done") return "Test zakończony";
+  if (status === "error") return "Test przerwany";
+  return "Oczekiwanie";
+}
+
+function formatDuration(ms) {
+  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${String(seconds).padStart(2, "0")}`;
 }
 
 async function showMonitorDetails(id) {

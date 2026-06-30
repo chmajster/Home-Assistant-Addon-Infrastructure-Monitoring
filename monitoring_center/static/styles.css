@@ -192,6 +192,98 @@ main { padding: 22px clamp(16px, 4vw, 40px) 40px; }
   gap: 8px;
 }
 
+.test-run-hero {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.run-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  padding: 5px 10px;
+  margin-bottom: 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  font-weight: 750;
+}
+
+.run-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: var(--muted);
+}
+
+.run-dot.running {
+  background: var(--warn);
+  animation: pulse 1s ease-in-out infinite;
+}
+
+.run-dot.done { background: var(--ok); }
+.run-dot.error { background: var(--danger); }
+.run-dot.pending { background: var(--line); }
+
+.run-timing {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(90px, 1fr));
+  gap: 10px;
+  margin: 0;
+  min-width: min(420px, 100%);
+}
+
+.run-timing div {
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface-2);
+}
+
+.run-timing dt {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.run-timing dd {
+  margin: 2px 0 0;
+  font-size: 18px;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.run-steps {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.run-step {
+  display: grid;
+  grid-template-columns: 18px 1fr;
+  align-items: center;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface-2);
+  color: var(--muted);
+}
+
+.run-step.done { color: var(--ok); }
+.run-step.error { color: var(--danger); }
+.run-step.running { color: var(--warn); }
+
+@keyframes pulse {
+  0%, 100% { opacity: 0.55; transform: scale(0.9); }
+  50% { opacity: 1; transform: scale(1.12); }
+}
+
 .list { display: grid; gap: 10px; margin-top: 14px; }
 .list.empty { color: var(--muted); }
 .list-item {
@@ -373,4 +465,6 @@ pre {
   .nav-actions button { flex: 1 1 130px; }
   .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .split { grid-template-columns: 1fr; }
+  .test-run-hero { align-items: stretch; flex-direction: column; }
+  .run-timing { grid-template-columns: 1fr; min-width: 0; }
 }
