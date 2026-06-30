@@ -172,12 +172,15 @@ main { padding: 22px clamp(16px, 4vw, 40px) 40px; }
 
 .card { padding: 16px; }
 .card.inactive { opacity: 0.72; }
-.clickable-card {
+.clickable-card,
+.clickable-monitor {
   cursor: pointer;
   transition: border-color .16s ease, transform .16s ease, box-shadow .16s ease;
 }
 .clickable-card:hover,
-.clickable-card:focus-visible {
+.clickable-card:focus-visible,
+.clickable-monitor:hover,
+.clickable-monitor:focus-visible {
   border-color: var(--primary);
   background: var(--surface-hover);
   transform: translateY(-1px);
@@ -261,17 +264,12 @@ main { padding: 22px clamp(16px, 4vw, 40px) 40px; }
   background: var(--surface);
 }
 
-.target-link,
 .target-text {
   display: inline-block;
   max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   vertical-align: bottom;
-}
-
-.target-link {
-  color: var(--primary);
 }
 .quick-actions {
   display: grid;

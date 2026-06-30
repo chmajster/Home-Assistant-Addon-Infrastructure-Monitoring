@@ -254,10 +254,11 @@ function renderAvailabilityChart() {
   }
   root.innerHTML = monitors.map((monitor) => {
     const down = isSuccessStatus(monitor.status) ? "0%" : "100%";
-    return `<div class="bar" style="--down:${down}" title="${escapeHtml(monitor.name)}">
+    return `<div class="bar clickable-monitor" data-card-id="${monitor.id}" tabindex="0" style="--down:${down}" title="Otwórz szczegóły monitoringu ${escapeHtml(monitor.name)}">
       <strong>${escapeHtml(monitor.name)}</strong><br>${escapeHtml(monitor.status)}
     </div>`;
   }).join("");
+  bindMonitorOpeners(root);
 }
 
 function renderMonitorLists() {
@@ -531,24 +532,11 @@ function renderMonitorTable(monitors) {
       <td>${monitor.maintenance_active ? formatDate(monitor.maintenance_until || monitor.group_maintenance_until) : "-"}</td>
     </tr>
   `).join("");
-  $$("[data-card-id]", body).forEach((row) => {
-    row.addEventListener("click", (event) => {
-      if (event.target.closest("a")) return;
-      showMonitorDetails(Number(row.dataset.cardId));
-    });
-    row.addEventListener("keydown", (event) => {
-      if (!["Enter", " "].includes(event.key)) return;
-      event.preventDefault();
-      showMonitorDetails(Number(row.dataset.cardId));
-    });
-  });
+  bindMonitorOpeners(body);
 }
 
 function targetHtml(monitor) {
   const value = monitor.target || "-";
-  if (monitorCategory(monitor) === "websites") {
-    return `<a class="target-link" href="${escapeHtml(value)}" title="${escapeHtml(value)}" target="_blank" rel="noreferrer">${escapeHtml(value)}</a>`;
-  }
   return `<span class="target-text" title="${escapeHtml(value)}">${escapeHtml(value)}</span>`;
 }
 
@@ -607,18 +595,19 @@ function renderCards(selector, monitors, options = {}) {
     </article>
   `).join("");
   if (options.details) {
-    $$("[data-card-id]", root).forEach((card) => {
-      card.addEventListener("click", (event) => {
-        if (event.target.closest(".actions, a")) return;
-        showMonitorDetails(Number(card.dataset.cardId));
-      });
-      card.addEventListener("keydown", (event) => {
-        if (!["Enter", " "].includes(event.key)) return;
-        event.preventDefault();
-        showMonitorDetails(Number(card.dataset.cardId));
-      });
-    });
+    bindMonitorOpeners(root);
   }
+}
+
+function bindMonitorOpeners(root) {
+  $$("[data-card-id]", root).forEach((node) => {
+    node.addEventListener("click", () => showMonitorDetails(Number(node.dataset.cardId)));
+    node.addEventListener("keydown", (event) => {
+      if (!["Enter", " "].includes(event.key)) return;
+      event.preventDefault();
+      showMonitorDetails(Number(node.dataset.cardId));
+    });
+  });
 }
 
 function renderMonitorMeta(monitor) {
