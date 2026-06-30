@@ -25,7 +25,7 @@ migrate(db)
 ha = HomeAssistantClient(config)
 service = MonitorService(db, config, ha)
 
-app = FastAPI(title="Monitoring Center", version="0.5.2")
+app = FastAPI(title="Monitoring Center", version="0.5.3")
 static_path = Path(__file__).resolve().parent.parent / "static"
 scheduler_task: asyncio.Task[Any] | None = None
 
@@ -231,7 +231,10 @@ app.mount("/static", StaticFiles(directory=static_path), name="static")
 
 @app.get("/")
 async def index() -> FileResponse:
-    return FileResponse(static_path / "index.html")
+    return FileResponse(
+        static_path / "index.html",
+        headers={"Cache-Control": "no-store, max-age=0"},
+    )
 
 
 def main() -> None:

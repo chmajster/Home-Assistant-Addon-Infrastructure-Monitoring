@@ -2,6 +2,13 @@
 
 All notable changes to the **Monitoring Center** Home Assistant add-on are documented here.
 
+## [0.5.3] - 2026-06-30
+
+### Fixed
+
+- Added cache busting for frontend assets and disabled caching of the main HTML shell so the removed Websites tab does not remain visible after an add-on update.
+- Bumped add-on and application metadata version to `0.5.3`.
+
 ## [0.5.2] - 2026-06-30
 
 ### Changed

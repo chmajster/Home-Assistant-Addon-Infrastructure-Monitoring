@@ -636,7 +636,7 @@ function renderMonitorMeta(monitor) {
       ["URL", monitor.target],
       ["HTTP status", monitor.last_http_status || "-"],
       ["Czas odpowiedzi", monitor.last_response_ms ? `${Number(monitor.last_response_ms).toFixed(1)} ms` : "-"],
-      ["Tryb WWW", typeLabel(monitor.type)],
+      ["Typ monitoringu", typeLabel(monitor.type)],
     );
     if (monitor.type === "http_hash") rows.push(["Suma WWW", hashHtml(monitor.last_content_hash)]);
     rows.push(["Ostatni błąd", monitor.last_error || "-"]);

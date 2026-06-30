@@ -4,6 +4,13 @@ Wszystkie istotne zmiany w projekcie **Home Assistant Monitoring / Monitoring Ce
 
 Format opiera się na konwencji Keep a Changelog, a wersjonowanie dodatku powinno podążać za SemVer tam, gdzie ma to zastosowanie.
 
+## [0.5.3] - 2026-06-30
+
+### Fixed
+
+- Dodano cache busting dla plików frontendu i wyłączono cache głównego HTML, żeby usunięta zakładka „Strony WWW” nie zostawała widoczna po aktualizacji dodatku.
+- Podniesiono wersję dodatku i metadanych aplikacji do `0.5.3`.
+
 ## [0.5.2] - 2026-06-30
 
 ### Changed
