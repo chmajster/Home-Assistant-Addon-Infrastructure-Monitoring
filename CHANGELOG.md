@@ -4,6 +4,13 @@ Wszystkie istotne zmiany w projekcie **Home Assistant Monitoring / Monitoring Ce
 
 Format opiera się na konwencji Keep a Changelog, a wersjonowanie dodatku powinno podążać za SemVer tam, gdzie ma to zastosowanie.
 
+## [0.4.1] - 2026-06-30
+
+### Fixed
+
+- Dodano changelog w katalogu add-onu `monitoring_center/CHANGELOG.md`, którego oczekuje Home Assistant Supervisor.
+- Podniesiono wersję dodatku i metadanych aplikacji do `0.4.1`.
+
 ## [0.4.0] - 2026-06-30
 
 ### Added

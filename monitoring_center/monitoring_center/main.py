@@ -25,7 +25,7 @@ migrate(db)
 ha = HomeAssistantClient(config)
 service = MonitorService(db, config, ha)
 
-app = FastAPI(title="Monitoring Center", version="0.4.0")
+app = FastAPI(title="Monitoring Center", version="0.4.1")
 static_path = Path(__file__).resolve().parent.parent / "static"
 scheduler_task: asyncio.Task[Any] | None = None
 

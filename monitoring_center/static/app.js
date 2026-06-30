@@ -182,7 +182,7 @@ function renderDashboard() {
   $("#metricChanged").textContent = summary.changed_websites ?? 0;
   $("#metricAvg").textContent = summary.avg_response_ms ? `${summary.avg_response_ms} ms` : "-";
   renderList("#recentFailures", summary.recent_failures || [], checkLine);
-  renderList("#recentChanges", summary.recent_changes || [], checkLine);
+  renderRecentChanges(summary.recent_changes || []);
   renderAvailabilityChart();
   renderSlo(summary.slo || {});
 }
@@ -1226,6 +1226,84 @@ function renderList(selector, items, renderer) {
   root.innerHTML = items.map(renderer).join("");
 }
 
+function renderRecentChanges(items) {
+  const root = $("#recentChanges");
+  if (!items.length) {
+    root.className = "change-log empty";
+    root.innerHTML = "Brak zmian WWW";
+    return;
+  }
+  root.className = "change-log";
+  const groups = groupByPeriod(items, (item) => item.checked_at);
+  root.innerHTML = groups.map((group) => `
+    <section class="change-period">
+      <div class="change-period-head">
+        <h3>${escapeHtml(group.label)}</h3>
+        <span>${group.items.length}</span>
+      </div>
+      <div class="change-period-items">
+        ${group.items.map(changeLine).join("")}
+      </div>
+    </section>
+  `).join("");
+}
+
+function groupByPeriod(items, getDateValue) {
+  const buckets = [
+    { key: "today", label: "Dzisiaj", items: [] },
+    { key: "yesterday", label: "Wczoraj", items: [] },
+    { key: "week", label: "Ostatnie 7 dni", items: [] },
+    { key: "month", label: "Ostatnie 30 dni", items: [] },
+    { key: "older", label: "Starsze", items: [] },
+  ];
+  const now = new Date();
+  const today = startOfLocalDay(now);
+  const yesterday = new Date(today);
+  yesterday.setDate(yesterday.getDate() - 1);
+  const weekAgo = new Date(today);
+  weekAgo.setDate(weekAgo.getDate() - 6);
+  const monthAgo = new Date(today);
+  monthAgo.setDate(monthAgo.getDate() - 29);
+
+  items.forEach((item) => {
+    const date = new Date(getDateValue(item));
+    if (Number.isNaN(date.getTime())) {
+      buckets[4].items.push(item);
+      return;
+    }
+    const day = startOfLocalDay(date);
+    if (day.getTime() === today.getTime()) buckets[0].items.push(item);
+    else if (day.getTime() === yesterday.getTime()) buckets[1].items.push(item);
+    else if (day >= weekAgo) buckets[2].items.push(item);
+    else if (day >= monthAgo) buckets[3].items.push(item);
+    else buckets[4].items.push(item);
+  });
+
+  return buckets.filter((bucket) => bucket.items.length);
+}
+
+function changeLine(row) {
+  const details = parseDetails(row.details_json);
+  const detailText = details.change_summary || details.error_message || details.current_hash || "";
+  return `
+    <article class="change-item">
+      <div class="change-main">
+        <strong>${escapeHtml(row.monitor_name)}</strong>
+        <small>${formatDate(row.checked_at)}</small>
+      </div>
+      <div class="change-meta">
+        <span class="badge ${badgeClass(row.status)}">${escapeHtml(row.status)}</span>
+        <span>HTTP ${row.http_status || "-"}</span>
+        <span>${row.response_ms ? Number(row.response_ms).toFixed(1) + " ms" : "brak czasu"}</span>
+        <span>${hashHtml(row.content_hash || details.current_hash)}</span>
+      </div>
+      <p>${escapeHtml(row.target || "-")}</p>
+      ${detailText ? `<small>${escapeHtml(String(detailText).slice(0, 180))}</small>` : ""}
+      ${row.error ? `<small class="error-text">${escapeHtml(row.error)}</small>` : ""}
+    </article>
+  `;
+}
+
 function checkLine(row) {
   return `
     <div class="list-item">
@@ -1249,6 +1327,10 @@ function typeLabel(type) {
 
 function isSuccessStatus(status) {
   return ["online", "ok", "open", "warning"].includes(status);
+}
+
+function startOfLocalDay(value) {
+  return new Date(value.getFullYear(), value.getMonth(), value.getDate());
 }
 
 function formatDate(value) {

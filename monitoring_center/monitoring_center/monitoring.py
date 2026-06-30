@@ -458,14 +458,14 @@ class MonitorService:
             FROM monitor_checks c
             JOIN monitors m ON m.id = c.monitor_id
             ORDER BY c.checked_at DESC, c.id DESC
-            LIMIT 30
+            LIMIT 200
             """
         )
         avg = self.db.fetchone(
             "SELECT AVG(response_ms) AS avg_response_ms FROM monitor_checks WHERE response_ms IS NOT NULL"
         )
-        recent_failures = [row for row in checks if not is_success_status(row["status"])][:8]
-        recent_changes = [row for row in checks if row["content_changed"]][:8]
+        recent_failures = [row for row in checks if not is_success_status(row["status"])][:12]
+        recent_changes = [row for row in checks if row["content_changed"]][:40]
         return {
             "total": len(monitors),
             "online": len([m for m in monitors if is_success_status(m["status"])]),
@@ -636,7 +636,7 @@ class MonitorService:
             """
         )
         return {
-            "version": "0.4.0",
+            "version": "0.4.1",
             "database_path": str(self.config.database_path),
             "database_exists": self.config.database_path.exists(),
             "database_size_bytes": self.config.database_path.stat().st_size if self.config.database_path.exists() else 0,

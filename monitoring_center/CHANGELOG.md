@@ -2,6 +2,13 @@
 
 All notable changes to the **Monitoring Center** Home Assistant add-on are documented here.
 
+## [0.4.1] - 2026-06-30
+
+### Fixed
+
+- Added the add-on changelog file expected by Home Assistant Supervisor.
+- Bumped add-on and application metadata version to `0.4.1`.
+
 ## [0.4.0] - 2026-06-30
 
 ### Added
