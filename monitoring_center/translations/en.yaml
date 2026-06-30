@@ -11,15 +11,12 @@ configuration:
   retention_days:
     name: Data retention
     description: Number of days to keep history, snapshots and events.
-  default_device_interval:
-    name: Default device interval
-    description: Default device check interval in seconds.
-  default_website_interval:
-    name: Default website interval
-    description: Default website check interval in seconds.
+  default_interval_seconds:
+    name: Default interval
+    description: Default interval for new monitors in seconds.
   default_timeout_minutes:
-    name: Timeout
-    description: Default monitor timeout in minutes.
+    name: Global timeout
+    description: Global timeout for all monitors in minutes.
   max_page_size_mb:
     name: Page size limit
     description: Maximum downloaded page size in MB.

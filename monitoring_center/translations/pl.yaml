@@ -11,15 +11,12 @@ configuration:
   retention_days:
     name: Retencja danych
     description: Liczba dni przechowywania historii, snapshotów i eventów.
-  default_device_interval:
-    name: Domyślny interwał urządzeń
-    description: Domyślny interwał sprawdzania urządzeń w sekundach.
-  default_website_interval:
-    name: Domyślny interwał stron WWW
-    description: Domyślny interwał sprawdzania stron w sekundach.
+  default_interval_seconds:
+    name: Domyślny interwał
+    description: Domyślny interwał nowych monitorów w sekundach.
   default_timeout_minutes:
-    name: Timeout
-    description: Domyślny timeout monitorów w minutach.
+    name: Globalny timeout
+    description: Globalny timeout wszystkich monitorów w minutach.
   max_page_size_mb:
     name: Limit rozmiaru strony
     description: Maksymalny rozmiar pobieranej strony w MB.

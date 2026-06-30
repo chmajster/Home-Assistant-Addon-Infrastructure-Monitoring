@@ -1305,16 +1305,6 @@ function renderTestResult(result) {
   node.textContent = parts.join(" | ");
 }
 
-function getTimeoutMinutes(config = {}) {
-  if (config.timeout_minutes !== undefined && config.timeout_minutes !== null && config.timeout_minutes !== "") {
-    return Number(config.timeout_minutes);
-  }
-  if (config.timeout_seconds !== undefined && config.timeout_seconds !== null && config.timeout_seconds !== "") {
-    return Number(config.timeout_seconds) / 60;
-  }
-  return "";
-}
-
 function getMaxPageSizeMb(config = {}) {
   if (config.max_page_size_mb !== undefined && config.max_page_size_mb !== null && config.max_page_size_mb !== "") {
     return Number(config.max_page_size_mb);

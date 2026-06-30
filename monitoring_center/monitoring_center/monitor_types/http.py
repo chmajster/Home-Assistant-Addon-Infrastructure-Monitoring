@@ -14,6 +14,11 @@ from ..validators import ensure_public_url_if_required, validate_url
 from .base import CheckResult, MonitorContext, csv_ints, normalize_timeout_config, positive_float, timeout_seconds_from_config
 
 LOGGER = logging.getLogger(__name__)
+PAGE_SIZE_LIMIT_ERROR = "Configured page size limit exceeded"
+
+
+class PageSizeLimitExceeded(ValueError):
+    pass
 
 
 class HttpStatusMonitor:
@@ -69,7 +74,13 @@ async def _http_fetch(monitor: dict[str, Any], context: MonitorContext, hash_con
                 1,
                 None,
             ) / 1024
-        max_bytes = int(positive_float(max_page_size_mb, float(context.settings["max_page_size_mb"]), 1 / 1024, None) * 1024 * 1024)
+        effective_max_page_size_mb = positive_float(
+            max_page_size_mb,
+            float(context.settings["max_page_size_mb"]),
+            1 / 1024,
+            None,
+        )
+        max_bytes = int(effective_max_page_size_mb * 1024 * 1024)
         started = time.perf_counter()
         async with httpx.AsyncClient(
             follow_redirects=True,
@@ -82,7 +93,7 @@ async def _http_fetch(monitor: dict[str, Any], context: MonitorContext, hash_con
                 async for chunk in response.aiter_bytes():
                     body.extend(chunk)
                     if len(body) > max_bytes:
-                        raise ValueError("Configured page size limit exceeded")
+                        raise PageSizeLimitExceeded(PAGE_SIZE_LIMIT_ERROR)
         elapsed_ms = (time.perf_counter() - started) * 1000
         status = "ok" if response.status_code in expected else ("warning" if response.status_code < 400 else "error")
         details: dict[str, Any] = {
@@ -119,6 +130,16 @@ async def _http_fetch(monitor: dict[str, Any], context: MonitorContext, hash_con
         if changed:
             result.events.append("website_hash_changed")
         return result
+    except PageSizeLimitExceeded as exc:
+        return CheckResult(
+            "error",
+            error=str(exc),
+            details={
+                "stop_checks": True,
+                "stop_reason": "page_size_limit_exceeded",
+                "max_page_size_mb": effective_max_page_size_mb,
+            },
+        )
     except Exception as exc:
         return CheckResult("error", error=str(exc))
 

@@ -280,6 +280,12 @@ class MonitorService:
                 ),
             )
             self._persist_runtime_details(monitor, details)
+            if details.get("stop_checks"):
+                self.db.execute(
+                    "UPDATE monitors SET enabled = 0, updated_at = datetime('now') WHERE id = ?",
+                    (monitor_id,),
+                )
+                self._last_started.pop(monitor_id, None)
             self.db.execute(
                 """
                 INSERT INTO monitor_checks(
@@ -532,9 +538,8 @@ class MonitorService:
             timeout_seconds = settings.get("request_timeout_seconds", settings.get("ping_timeout_seconds", 300))
             settings["default_timeout_minutes"] = max(_safe_float(timeout_seconds, 300) / 60, 1 / 60)
         if "default_interval_seconds" not in persisted_keys:
-            settings["default_interval_seconds"] = int(
-                settings.get("default_website_interval", settings.get("default_device_interval", 300))
-            )
+            legacy_interval = settings.get("default_website_interval", settings.get("default_device_interval", 300))
+            settings["default_interval_seconds"] = int(max(_safe_float(legacy_interval, 300), 5))
         if "max_page_size_mb" not in persisted_keys:
             settings["max_page_size_mb"] = max(_safe_float(settings.get("max_page_size_kb", 512), 512) / 1024, 1 / 1024)
         settings.pop("request_timeout_seconds", None)
@@ -611,9 +616,8 @@ class MonitorService:
         normalized.pop("request_timeout_seconds", None)
         normalized.pop("ping_timeout_seconds", None)
         if "default_interval_seconds" not in normalized:
-            normalized["default_interval_seconds"] = int(
-                normalized.pop("default_website_interval", normalized.pop("default_device_interval", 300))
-            )
+            legacy_interval = normalized.pop("default_website_interval", normalized.pop("default_device_interval", 300))
+            normalized["default_interval_seconds"] = int(max(_safe_float(legacy_interval, 300), 5))
         normalized.pop("default_device_interval", None)
         normalized.pop("default_website_interval", None)
 

@@ -57,7 +57,10 @@ class AppConfig:
             timeout_seconds = data.get("request_timeout_seconds", data.get("ping_timeout_seconds", 300))
             data["default_timeout_minutes"] = max(_safe_float(timeout_seconds, 300) / 60, 1 / 60)
         if "default_interval_seconds" not in loaded:
-            data["default_interval_seconds"] = int(data.get("default_website_interval", data.get("default_device_interval", 300)))
+            legacy_interval = data.get("default_website_interval", data.get("default_device_interval", 300))
+            data["default_interval_seconds"] = int(
+                max(_safe_float(legacy_interval, 300), 5)
+            )
         if "max_page_size_mb" not in loaded:
             data["max_page_size_mb"] = max(_safe_float(data.get("max_page_size_kb", 512), 512) / 1024, 1 / 1024)
 
