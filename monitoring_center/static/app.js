@@ -19,6 +19,7 @@ const state = {
   monitorView: "cards",
   dashboardTypeFilter: "all",
   selectedMonitorIds: new Set(),
+  bulkSelectionMode: false,
   events: [],
   eventTypeFilter: "",
   eventQuery: "",
@@ -165,6 +166,7 @@ function bindForms() {
     renderMonitorLists();
   });
   $("#selectAllMonitors")?.addEventListener("change", toggleVisibleMonitorSelection);
+  $("#bulkSelectionModeBtn")?.addEventListener("click", toggleBulkSelectionMode);
   $$("[data-bulk-action]").forEach((button) => button.addEventListener("click", handleBulkAction));
   $("#dashboardTypeFilter").addEventListener("change", (event) => {
     state.dashboardTypeFilter = event.currentTarget.value;
@@ -336,7 +338,12 @@ function persistMonitorUiState() {
 function showView(viewId, activeTab = viewId) {
   $$(".view").forEach((view) => view.classList.remove("active"));
   $(`#${viewId}`)?.classList.add("active");
-  $$(".tab").forEach((tab) => tab.classList.toggle("active", tab.dataset.tab === activeTab));
+  $$(".tab").forEach((tab) => {
+    const isActive = tab.dataset.tab === activeTab;
+    tab.classList.toggle("active", isActive);
+    if (isActive) tab.setAttribute("aria-current", "page");
+    else tab.removeAttribute("aria-current");
+  });
 }
 
 function renderGlobalStatus() {
@@ -801,7 +808,7 @@ function renderMonitorTable(monitors) {
     return;
   }
   body.innerHTML = monitors.map((monitor) => `
-    <tr class="clickable-row" data-card-id="${monitor.id}" tabindex="0" title="Otwórz szczegóły monitoringu">
+    <tr class="clickable-row ${state.selectedMonitorIds.has(monitor.id) ? "selected" : ""}" data-card-id="${monitor.id}" tabindex="0" title="${state.bulkSelectionMode ? "Zaznacz monitoring" : "Otwórz szczegóły monitoringu"}">
       <td><span class="badge ${monitor.enabled ? badgeClass(monitor.status) : "unknown"}">${monitor.enabled ? escapeHtml(monitor.status) : "wyłączony"}</span></td>
       <td>${escapeHtml(typeLabel(monitor.type))}</td>
       <td><strong>${escapeHtml(monitor.name)}</strong></td>
@@ -911,7 +918,7 @@ function renderMonitorCardsModern(selector, monitors) {
     return;
   }
   root.innerHTML = monitors.map((monitor) => `
-    <article class="card clickable-card ${monitor.enabled ? "" : "inactive"}" data-card-id="${monitor.id}" tabindex="0">
+    <article class="card clickable-card ${state.selectedMonitorIds.has(monitor.id) ? "selected" : ""} ${monitor.enabled ? "" : "inactive"}" data-card-id="${monitor.id}" tabindex="0" title="${state.bulkSelectionMode ? "Zaznacz monitoring" : "Otwórz szczegóły monitoringu"}">
       <div class="card-head">
         <div class="card-title-row">
           <input class="monitor-select" type="checkbox" data-select-monitor="${monitor.id}" ${state.selectedMonitorIds.has(monitor.id) ? "checked" : ""} aria-label="Zaznacz ${escapeHtml(monitor.name)}" />
@@ -944,6 +951,11 @@ function bindMonitorOpeners(root) {
     node.addEventListener("click", (event) => {
       const interactive = event.target.closest("button, input, select, summary, details, a");
       if (interactive && interactive !== node) return;
+      if (state.bulkSelectionMode && node.querySelector("[data-select-monitor]")) {
+        event.preventDefault();
+        toggleMonitorSelectionNode(node);
+        return;
+      }
       showMonitorDetails(Number(node.dataset.cardId));
     });
     node.addEventListener("keydown", (event) => {
@@ -951,6 +963,10 @@ function bindMonitorOpeners(root) {
       const interactive = event.target.closest("button, input, select, summary, details, a");
       if (interactive && interactive !== node) return;
       event.preventDefault();
+      if (state.bulkSelectionMode && node.querySelector("[data-select-monitor]")) {
+        toggleMonitorSelectionNode(node);
+        return;
+      }
       showMonitorDetails(Number(node.dataset.cardId));
     });
   });
@@ -1043,19 +1059,42 @@ function bindMonitorSelection(root) {
       const id = Number(event.currentTarget.dataset.selectMonitor);
       if (event.currentTarget.checked) state.selectedMonitorIds.add(id);
       else state.selectedMonitorIds.delete(id);
+      event.currentTarget.closest("[data-card-id]")?.classList.toggle("selected", event.currentTarget.checked);
       renderBulkState(filterMonitorsForList(state.monitors));
     });
   });
+}
+
+function toggleMonitorSelectionNode(node) {
+  const checkbox = node.querySelector("[data-select-monitor]");
+  if (!checkbox) return;
+  checkbox.checked = !checkbox.checked;
+  const id = Number(checkbox.dataset.selectMonitor);
+  if (checkbox.checked) state.selectedMonitorIds.add(id);
+  else state.selectedMonitorIds.delete(id);
+  node.classList.toggle("selected", checkbox.checked);
+  renderBulkState(filterMonitorsForList(state.monitors));
 }
 
 function renderBulkState(visibleMonitors = filterMonitorsForList(state.monitors)) {
   const visibleIds = visibleMonitors.map((monitor) => monitor.id);
   const selectedVisible = visibleIds.filter((id) => state.selectedMonitorIds.has(id));
   if ($("#bulkSelectionCount")) $("#bulkSelectionCount").textContent = `${state.selectedMonitorIds.size} zaznaczonych`;
+  const modeButton = $("#bulkSelectionModeBtn");
+  if (modeButton) {
+    modeButton.classList.toggle("active", state.bulkSelectionMode);
+    modeButton.setAttribute("aria-pressed", String(state.bulkSelectionMode));
+    modeButton.textContent = state.bulkSelectionMode ? "Zakończ zaznaczanie" : "Zaznacz masowo";
+  }
   if ($("#selectAllMonitors")) {
     $("#selectAllMonitors").checked = visibleIds.length > 0 && selectedVisible.length === visibleIds.length;
     $("#selectAllMonitors").indeterminate = selectedVisible.length > 0 && selectedVisible.length < visibleIds.length;
   }
+}
+
+function toggleBulkSelectionMode() {
+  state.bulkSelectionMode = !state.bulkSelectionMode;
+  renderMonitorLists();
 }
 
 function toggleVisibleMonitorSelection(event) {

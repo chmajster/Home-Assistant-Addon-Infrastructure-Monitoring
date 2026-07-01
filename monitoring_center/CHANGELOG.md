@@ -2,6 +2,14 @@
 
 All notable changes to the **Monitoring Center** Home Assistant add-on are documented here.
 
+## [0.7.1] - 2026-07-02
+
+### Changed
+
+- Refined the sidebar UI with consistent SVG icons, clearer active state, polished hover/focus states, and light/dark theme variables.
+- Added bulk selection mode so clicking a monitor card or table row toggles its selection.
+- Bumped add-on and application metadata version to `0.7.1`.
+
 ## [0.7.0] - 2026-07-01
 
 ### Added

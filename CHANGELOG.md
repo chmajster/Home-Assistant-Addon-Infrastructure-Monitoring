@@ -4,6 +4,14 @@ Wszystkie istotne zmiany w projekcie **Home Assistant Monitoring / Monitoring Ce
 
 Format opiera się na konwencji Keep a Changelog, a wersjonowanie dodatku powinno podążać za SemVer tam, gdzie ma to zastosowanie.
 
+## [0.7.1] - 2026-07-02
+
+### Changed
+
+- Odświeżono UI sidebaru: spójne ikony SVG, lepszy aktywny stan, hover/focus oraz obsługa jasnego i ciemnego motywu.
+- Dodano tryb `Zaznacz masowo`, w którym kliknięcie kafelka lub wiersza przełącza zaznaczenie monitora.
+- Podniesiono wersję dodatku i metadanych aplikacji do `0.7.1`.
+
 ## [0.7.0] - 2026-07-01
 
 ### Added
