@@ -2,6 +2,20 @@
 
 All notable changes to the **Monitoring Center** Home Assistant add-on are documented here.
 
+## [0.7.7] - 2026-07-02
+
+### Changed
+
+- Refined the add/edit monitor modal with a larger dialog, sticky header/footer, balanced type cards, dynamic target labels, clearer type settings, and JSON copy action.
+- Bumped add-on and application metadata version to `0.7.7`.
+
+## [0.7.6] - 2026-07-02
+
+### Changed
+
+- Removed the `Więcej` dropdown from the monitor list and replaced it with inline `Edytuj`, `Test`, and `Serwis` actions.
+- Bumped add-on and application metadata version to `0.7.6`.
+
 ## [0.7.5] - 2026-07-02
 
 ### Changed

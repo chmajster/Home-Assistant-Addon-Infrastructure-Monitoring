@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Monitoring Center</title>
-    <link rel="stylesheet" href="static/styles.css?v=0.7.5" />
+    <link rel="stylesheet" href="static/styles.css?v=0.7.7" />
   </head>
   <body>
     <svg class="icon-sprite" aria-hidden="true" focusable="false">
@@ -565,15 +565,15 @@
       <button class="tab" data-tab="settings"><svg class="nav-icon" aria-hidden="true"><use href="#icon-settings"></use></svg><span>Więcej</span></button>
     </nav>
 
-    <dialog id="monitorDialog" class="drawer-dialog">
-      <form id="monitorForm" method="dialog">
+    <dialog id="monitorDialog" class="drawer-dialog monitor-dialog">
+      <form id="monitorForm" class="monitor-dialog-form" method="dialog">
         <input type="hidden" name="id" />
         <div class="drawer-head">
           <div>
             <h2 id="dialogTitle">Monitor</h2>
             <p>Skonfiguruj typ, cel i parametry sprawdzania. WWW pozostaje typem monitora.</p>
           </div>
-          <button id="cancelMonitorBtn" type="button" aria-label="Zamknij">×</button>
+          <button id="cancelMonitorBtn" class="dialog-close-btn" type="button" aria-label="Zamknij">×</button>
         </div>
         <section class="form-section">
           <h3>Typ monitora</h3>
@@ -582,14 +582,14 @@
         </section>
         <section class="form-section grid-form">
           <label>Nazwa<input name="name" required maxlength="120" placeholder="Router, NAS, example.com" /></label>
-          <label id="targetLabel">Cel<input name="target" required placeholder="IP, hostname, URL albo entity_id" /></label>
+          <label id="targetLabel"><span id="targetLabelText">Cel monitorowania</span><input name="target" required placeholder="IP, hostname, URL albo entity_id" /></label>
           <label>Grupa<select name="group_id" id="monitorGroupSelect"><option value="">Bez grupy</option></select></label>
           <label>Interwał sprawdzania s<input name="interval_seconds" type="number" min="5" max="86400" placeholder="z ustawień" /></label>
           <label class="check"><input name="enabled" type="checkbox" checked /> Aktywny</label>
           <label class="check"><input name="test_on_save" type="checkbox" checked /> Testuj przy zapisie</label>
         </section>
-        <section class="form-section">
-          <h3>Pola typu</h3>
+        <section id="typeOptionsSection" class="form-section">
+          <h3>Ustawienia typu</h3>
           <div id="tcpOptions" class="nested type-options"><label>Host/IP<input name="tcp_host" placeholder="192.168.1.10" /></label><label>Port<input name="tcp_port" type="number" min="1" max="65535" placeholder="22" /></label></div>
           <div id="httpOptions" class="nested type-options"><label>Oczekiwane kody HTTP<input name="expected_status_codes" placeholder="200,204,301" /></label></div>
           <div id="websiteOptions" class="nested type-options"><label>Selektor CSS<input name="css_selector" placeholder="np. main article" /></label><label>Ignorowane regexy<textarea name="ignore_patterns" rows="4" placeholder="Jedna reguła na linię"></textarea></label><label>Limit strony MB<input name="max_page_size_mb" type="number" min="0.01" step="0.01" /></label></div>
@@ -604,16 +604,19 @@
             <h3>Presety</h3>
             <div class="actions">
               <label class="grow">Preset<select id="presetSelect"><option value="">Wybierz preset</option></select></label>
-              <button id="applyPresetBtn" type="button">Skopiuj preset</button>
+              <button id="applyPresetBtn" type="button">Zastosuj preset</button>
             </div>
             <div id="monitorTestResult" class="test-result hidden" role="status"></div>
           </div>
           <div>
-            <h3>Podgląd JSON</h3>
+            <div class="json-preview-head">
+              <h3>Podgląd JSON</h3>
+              <button id="copyConfigBtn" type="button" aria-label="Kopiuj JSON konfiguracji">Kopiuj JSON</button>
+            </div>
             <pre id="configPreview" class="json-preview">{}</pre>
           </div>
         </section>
-        <menu>
+        <menu class="dialog-footer">
           <button type="button" data-dialog-close="monitorDialog">Anuluj</button>
           <button id="testMonitorBtn" value="default" type="button">Testuj teraz</button>
           <button id="saveMonitorBtn" value="default" class="primary">Zapisz</button>
@@ -670,6 +673,6 @@
     </dialog>
 
     <div id="toast" role="status" aria-label="Komunikat aplikacji" title="Kliknij, aby zamknąć"></div>
-    <script src="static/app.js?v=0.7.5"></script>
+    <script src="static/app.js?v=0.7.7"></script>
   </body>
 </html>

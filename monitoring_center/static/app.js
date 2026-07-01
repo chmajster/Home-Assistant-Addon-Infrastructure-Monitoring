@@ -78,8 +78,6 @@ function bindNavigation() {
   $("#refreshBtn").addEventListener("click", manualRefresh);
   $("#brandHomeBtn")?.addEventListener("click", () => showView("dashboard"));
   $("#themeMode")?.addEventListener("change", (event) => applyTheme(event.currentTarget.value));
-  document.addEventListener("click", closeActionMenusOnOutsideClick);
-  document.addEventListener("keydown", closeActionMenusOnEscape);
   $("#toast").addEventListener("click", hideToast);
   $("#detailBackBtn").addEventListener("click", () => showView("monitoring"));
   $("#testBackBtn").addEventListener("click", backFromMonitorTest);
@@ -122,6 +120,7 @@ function bindForms() {
   $("#monitorForm").addEventListener("input", updateConfigPreview);
   $("#monitorForm").addEventListener("change", updateConfigPreview);
   $("#applyPresetBtn").addEventListener("click", applyPreset);
+  $("#copyConfigBtn")?.addEventListener("click", copyConfigPreview);
   $("#settingsForm").addEventListener("submit", saveSettings);
   $("#settingsResetBtn")?.addEventListener("click", renderSettings);
   $("#densityMode")?.addEventListener("change", (event) => applyDensity(event.currentTarget.value));
@@ -606,9 +605,11 @@ function renderMonitorTypeCards() {
   if (!root) return;
   const selected = $("#monitorTypeSelect").value || state.monitorTypes[0]?.type || "ping_host";
   root.innerHTML = state.monitorTypes.map((type) => `
-    <button class="type-card ${type.type === selected ? "active" : ""}" type="button" data-monitor-type="${type.type}">
-      <span>${typeIcon(type.type)} ${escapeHtml(type.label)}</span>
-      <small>${escapeHtml(type.category || "monitor")} · domyślnie ${type.default_interval || "-"}s</small>
+    <button class="type-card ${type.type === selected ? "active" : ""}" type="button" data-monitor-type="${type.type}" aria-pressed="${type.type === selected}">
+      <span class="type-card-title">${escapeHtml(typeDisplayName(type))}</span>
+      <span class="type-card-meta">${escapeHtml(type.category || "monitor")} · ${type.default_interval || "-"}s</span>
+      ${type.description ? `<small>${escapeHtml(type.description)}</small>` : ""}
+      ${type.type === selected ? '<span class="type-selected">Wybrany</span>' : ""}
     </button>
   `).join("");
   $$("[data-monitor-type]", root).forEach((button) => {
@@ -619,16 +620,20 @@ function renderMonitorTypeCards() {
   });
 }
 
-function typeIcon(type) {
-  if (type === "ping_host") return "◉";
-  if (type === "tcp_port") return "↔";
-  if (type === "dns_lookup") return "DNS";
-  if (type === "ssl_certificate") return "SSL";
-  if (type === "rest_api") return "{}";
-  if (type === "ha_entity") return "HA";
-  if (type === "mqtt_monitor") return "MQ";
-  if (type === "http_hash") return "WWW";
-  return "•";
+function typeDisplayName(type) {
+  const key = typeof type === "string" ? type : type.type;
+  const labels = {
+    ping_host: "Ping hosta",
+    tcp_port: "Port TCP",
+    http_status: "WWW status HTTP/HTTPS",
+    http_hash: "WWW hash zawartości",
+    dns_lookup: "DNS lookup",
+    ssl_certificate: "Certyfikat SSL",
+    rest_api: "REST API",
+    ha_entity: "Encja Home Assistant",
+    mqtt_monitor: "MQTT monitor",
+  };
+  return labels[key] || type.label || key;
 }
 
 function renderDetailMonitorOptions() {
@@ -726,25 +731,31 @@ function applyPreset() {
 function renderTypeFields(type) {
   $$(".type-options").forEach((node) => node.classList.add("hidden"));
   const targetLabels = {
-    ping_host: "IP lub hostname",
-    tcp_port: "Host:port",
-    http_status: "Adres URL",
-    http_hash: "Adres URL",
-    dns_lookup: "Domena",
-    ssl_certificate: "Host lub host:port",
-    rest_api: "Endpoint REST API",
-    ha_entity: "Entity ID",
-    mqtt_monitor: "Broker host:port",
+    ping_host: ["Host lub IP", "192.168.1.1 albo router.local"],
+    tcp_port: ["Host lub IP", "192.168.1.10:443 albo example.com:443"],
+    http_status: ["URL lub domena", "https://example.com"],
+    http_hash: ["URL lub domena", "https://example.com"],
+    dns_lookup: ["URL lub domena", "example.com"],
+    ssl_certificate: ["URL lub domena", "example.com"],
+    rest_api: ["URL lub domena", "https://example.com/api/status"],
+    ha_entity: ["Entity ID", "sensor.example"],
+    mqtt_monitor: ["Topic lub broker", "home/topic/status"],
   };
-  $("#targetLabel").firstChild.textContent = targetLabels[type] || "Cel";
-  if (type === "tcp_port") $("#tcpOptions").classList.remove("hidden");
-  if (["http_status", "http_hash", "rest_api"].includes(type)) $("#httpOptions").classList.remove("hidden");
-  if (type === "http_hash") $("#websiteOptions").classList.remove("hidden");
-  if (type === "dns_lookup") $("#dnsOptions").classList.remove("hidden");
-  if (type === "ssl_certificate") $("#sslOptions").classList.remove("hidden");
-  if (type === "rest_api") $("#restOptions").classList.remove("hidden");
-  if (type === "ha_entity") $("#haEntityOptions").classList.remove("hidden");
-  if (type === "mqtt_monitor") $("#mqttOptions").classList.remove("hidden");
+  const [label, placeholder] = targetLabels[type] || ["Cel monitorowania", "IP, hostname, URL albo entity_id"];
+  if ($("#targetLabelText")) $("#targetLabelText").textContent = label;
+  const targetInput = $("#targetLabel input");
+  if (targetInput) targetInput.placeholder = placeholder;
+  const visibleSections = [];
+  if (type === "tcp_port") visibleSections.push("#tcpOptions");
+  if (["http_status", "http_hash", "rest_api"].includes(type)) visibleSections.push("#httpOptions");
+  if (type === "http_hash") visibleSections.push("#websiteOptions");
+  if (type === "dns_lookup") visibleSections.push("#dnsOptions");
+  if (type === "ssl_certificate") visibleSections.push("#sslOptions");
+  if (type === "rest_api") visibleSections.push("#restOptions");
+  if (type === "ha_entity") visibleSections.push("#haEntityOptions");
+  if (type === "mqtt_monitor") visibleSections.push("#mqttOptions");
+  visibleSections.forEach((selector) => $(selector)?.classList.remove("hidden"));
+  $("#typeOptionsSection")?.classList.toggle("hidden", visibleSections.length === 0);
   renderMonitorTypeCards();
   updateConfigPreview();
 }
@@ -901,7 +912,7 @@ function renderMonitorTableModern(monitors) {
       <td>${monitor.interval_seconds}s</td>
       <td>${escapeHtml(monitor.group_name || "Bez grupy")}</td>
       <td>${formatDate(monitor.last_checked_at)}</td>
-      <td><div class="actions compact-actions">${renderInlineMonitorActions(monitor)}</div></td>
+      <td><div class="monitor-list-actions">${renderMonitorListActions(monitor)}</div></td>
     </tr>
   `).join("");
   bindMonitorOpeners(body);
@@ -972,32 +983,100 @@ function renderMonitorCardsModern(selector, monitors) {
     return;
   }
   root.innerHTML = monitors.map((monitor) => `
-    <article class="card clickable-card ${state.selectedMonitorIds.has(monitor.id) ? "selected" : ""} ${monitor.enabled ? "" : "inactive"}" data-card-id="${monitor.id}" tabindex="0" title="${state.bulkSelectionMode ? "Zaznacz monitoring" : "Otwórz szczegóły monitoringu"}">
-      <div class="card-head">
-        <div class="card-title-row">
-          <input class="monitor-select" type="checkbox" data-select-monitor="${monitor.id}" ${state.selectedMonitorIds.has(monitor.id) ? "checked" : ""} aria-label="Zaznacz ${escapeHtml(monitor.name)}" />
-          <div>
-            <h3>${escapeHtml(monitor.name)}</h3>
-            <p>${targetHtml(monitor)}</p>
-          </div>
+    <article class="card monitor-card monitor-list-card clickable-card ${state.selectedMonitorIds.has(monitor.id) ? "selected" : ""} ${monitor.enabled ? "" : "inactive"}" data-card-id="${monitor.id}" tabindex="0" title="${state.bulkSelectionMode ? "Zaznacz monitoring" : "Otwórz szczegóły monitoringu"}">
+      <header class="monitor-card-header">
+        <input class="monitor-select" type="checkbox" data-select-monitor="${monitor.id}" ${state.selectedMonitorIds.has(monitor.id) ? "checked" : ""} aria-label="Zaznacz ${escapeHtml(monitor.name)}" />
+        <div class="monitor-title-wrap">
+          <h3 class="monitor-title" title="${escapeHtml(monitor.name)}">${escapeHtml(monitor.name)}</h3>
+          <p class="monitor-host" title="${escapeHtml(monitorHostValue(monitor))}">${escapeHtml(monitorHostValue(monitor))}</p>
         </div>
-        <span class="badge ${monitor.enabled ? badgeClass(monitor.status) : "unknown"}">${monitor.enabled ? escapeHtml(monitor.status) : "disabled"}</span>
+        <span class="badge monitor-status-badge ${monitor.enabled ? badgeClass(monitor.status) : "unknown"}">${monitor.enabled ? escapeHtml(monitor.status || "unknown") : "wyłączony"}</span>
+      </header>
+      <div class="monitor-fields">
+        ${renderMonitorSummaryFields(monitor)}
       </div>
-      <div class="meta">${renderMonitorMeta(monitor)}</div>
-      <div class="actions">${renderInlineMonitorActions(monitor)}${renderCardActions(monitor)}</div>
+      <div id="monitor-more-${monitor.id}" class="monitor-more-content hidden">
+        ${renderMonitorMoreDetails(monitor)}
+      </div>
+      <div class="monitor-actions">${renderMonitorListActions(monitor, { includeMore: true })}</div>
     </article>
   `).join("");
   bindMonitorOpeners(root);
   bindMonitorSelection(root);
   bindMonitorActions(root);
+  bindMonitorMore(root);
 }
 
-function renderInlineMonitorActions(monitor) {
+function renderMonitorListActions(monitor, options = {}) {
   return `
-    <button data-action="check" data-id="${monitor.id}" type="button" aria-label="Sprawdź ${escapeHtml(monitor.name)}">↻</button>
+    <button data-action="check" data-id="${monitor.id}" type="button" class="primary">↻ Odśwież</button>
     <button data-action="edit" data-id="${monitor.id}" type="button">Edytuj</button>
     <button data-action="duplicate" data-id="${monitor.id}" type="button">Duplikuj</button>
+    <button data-action="maintenance" data-id="${monitor.id}" type="button">Serwis</button>
+    ${options.includeMore ? `<button data-more-monitor="${monitor.id}" type="button" aria-expanded="false" aria-controls="monitor-more-${monitor.id}">Więcej</button>` : ""}
   `;
+}
+
+function monitorHostValue(monitor) {
+  const config = monitor.config || {};
+  return config.host || config.topic || monitor.target || "-";
+}
+
+function monitorStatusValue(monitor) {
+  return monitor.enabled ? (monitor.status || "-") : "nieaktywny";
+}
+
+function monitorResponseValue(monitor) {
+  return formatResponse(monitor.last_response_ms);
+}
+
+function renderMonitorField(label, value, className = "") {
+  return `
+    <div class="monitor-field ${className}">
+      <span class="monitor-field-label">${escapeHtml(label)}</span>
+      <span class="monitor-field-value" title="${escapeHtml(String(value || "-"))}">${escapeHtml(String(value || "-"))}</span>
+    </div>
+  `;
+}
+
+function renderMonitorSummaryFields(monitor) {
+  const error = monitor.last_error || "-";
+  return [
+    renderMonitorField("Typ", typeLabel(monitor.type)),
+    renderMonitorField("IP / host", monitorHostValue(monitor)),
+    renderMonitorField("Status", monitorStatusValue(monitor)),
+    renderMonitorField("Ping / odpowiedź", monitorResponseValue(monitor)),
+    renderMonitorField("Ostatni test", formatShortDate(monitor.last_checked_at)),
+    renderMonitorField("Ostatni błąd", error, "monitor-error-field"),
+  ].join("");
+}
+
+function renderMonitorMoreDetails(monitor) {
+  const diagnostic = diagnosticMessage(monitor);
+  const details = [
+    ["Grupa", monitor.group_name || "Bez grupy"],
+    ["Interwał", `${monitor.interval_seconds}s`],
+    ["Aktywny", monitor.enabled ? "tak" : "nie"],
+    ["Serwis", monitor.maintenance_active ? `aktywny do ${formatDate(monitor.maintenance_until || monitor.group_maintenance_until)}` : "-"],
+    ["Diagnostyka", diagnostic || "-"],
+    ["Pełny ostatni błąd", monitor.last_error || "-"],
+    ["Pełna data ostatniego testu", formatDate(monitor.last_checked_at)],
+  ];
+  return details.map(([label, value]) => renderMonitorField(label, value, label.includes("błąd") ? "monitor-full-error-field" : "")).join("");
+}
+
+function bindMonitorMore(root) {
+  $$("[data-more-monitor]", root).forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const panel = $(`#monitor-more-${event.currentTarget.dataset.moreMonitor}`);
+      if (!panel) return;
+      const expanded = panel.classList.toggle("hidden") === false;
+      event.currentTarget.setAttribute("aria-expanded", String(expanded));
+      event.currentTarget.textContent = expanded ? "Mniej" : "Więcej";
+    });
+  });
 }
 
 function bindMonitorOpeners(root) {
@@ -1080,37 +1159,12 @@ function renderMonitorMeta(monitor) {
   }).join("");
 }
 
-function renderCardActions(monitor) {
-  return `
-    <details class="action-menu">
-      <summary aria-label="Akcje serwisowe monitora ${escapeHtml(monitor.name)}">Serwis</summary>
-      <div class="action-menu-list">
-        <button data-action="maintenance" data-id="${monitor.id}">Ustaw serwis</button>
-        ${monitor.maintenance_until ? `<button data-action="maint-clear" data-id="${monitor.id}">Wyłącz serwis</button>` : ""}
-      </div>
-    </details>
-    <details class="action-menu">
-      <summary aria-label="Więcej akcji monitora ${escapeHtml(monitor.name)}">Więcej</summary>
-      <div class="action-menu-list">
-        <button data-action="toggle-enabled" data-id="${monitor.id}">${monitor.enabled ? "Wyłącz monitoring" : "Włącz monitoring"}</button>
-        ${monitor.type === "http_hash" ? `<button data-action="snapshots" data-id="${monitor.id}">Zmiany</button>` : ""}
-        <button data-action="delete" data-id="${monitor.id}" class="danger-action">Usuń</button>
-      </div>
-    </details>
-  `;
-}
-
 function renderDetailActions(monitor) {
   return `
     <button data-action="maintenance" data-id="${monitor.id}" type="button">Serwis</button>
-    <details class="action-menu detail-more-menu">
-      <summary aria-label="Więcej akcji monitora ${escapeHtml(monitor.name)}">Więcej</summary>
-      <div class="action-menu-list">
-        <button data-action="toggle-enabled" data-id="${monitor.id}" type="button">${monitor.enabled ? "Wyłącz monitoring" : "Włącz monitoring"}</button>
-        ${monitor.type === "http_hash" ? `<button data-action="snapshots" data-id="${monitor.id}" type="button">Zmiany</button>` : ""}
-        <button data-action="delete" data-id="${monitor.id}" type="button" class="danger-action">Usuń</button>
-      </div>
-    </details>
+    <button data-action="toggle-enabled" data-id="${monitor.id}" type="button">${monitor.enabled ? "Wyłącz monitoring" : "Włącz monitoring"}</button>
+    ${monitor.type === "http_hash" ? `<button data-action="snapshots" data-id="${monitor.id}" type="button">Zmiany</button>` : ""}
+    <button data-action="delete" data-id="${monitor.id}" type="button" class="danger-action">Usuń</button>
   `;
 }
 
@@ -1119,21 +1173,9 @@ function bindMonitorActions(root) {
     button.addEventListener("click", (event) => {
       event.preventDefault();
       event.stopPropagation();
-      event.currentTarget.closest("details.action-menu")?.removeAttribute("open");
       handleCardAction(event);
     });
   });
-}
-
-function closeActionMenusOnOutsideClick(event) {
-  $$("details.action-menu[open]").forEach((menu) => {
-    if (!menu.contains(event.target)) menu.removeAttribute("open");
-  });
-}
-
-function closeActionMenusOnEscape(event) {
-  if (event.key !== "Escape") return;
-  $$("details.action-menu[open]").forEach((menu) => menu.removeAttribute("open"));
 }
 
 function bindMonitorSelection(root) {
@@ -2066,6 +2108,16 @@ function updateConfigPreview() {
   }
 }
 
+async function copyConfigPreview() {
+  const value = $("#configPreview")?.textContent || "{}";
+  try {
+    await navigator.clipboard.writeText(value);
+    toast("JSON skopiowany.");
+  } catch (_) {
+    toast("Nie udało się skopiować JSON.", "error");
+  }
+}
+
 async function testMonitorFromForm(event) {
   event?.preventDefault();
   event?.stopPropagation();
@@ -2606,6 +2658,18 @@ function startOfLocalDay(value) {
 function formatDate(value) {
   if (!value) return "-";
   return new Date(value).toLocaleString();
+}
+
+function formatShortDate(value) {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "-";
+  return date.toLocaleString(undefined, {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 function toIso(value) {
