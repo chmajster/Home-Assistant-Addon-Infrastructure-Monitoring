@@ -4,6 +4,14 @@ Wszystkie istotne zmiany w projekcie **Home Assistant Monitoring / Monitoring Ce
 
 Format opiera się na konwencji Keep a Changelog, a wersjonowanie dodatku powinno podążać za SemVer tam, gdzie ma to zastosowanie.
 
+## [0.7.5] - 2026-07-02
+
+### Changed
+
+- Uporządkowano logo/sidebar, usunięto zduplikowany kontroler motywu i dopracowano dropdown akcji monitora.
+- Przebudowano historię odpowiedzi w szczegółach monitora: filtry, sortowanie, paginacja po 100 wpisów i stan ładowania.
+- Podniesiono wersję dodatku i metadanych aplikacji do `0.7.5`.
+
 ## [0.7.4] - 2026-07-02
 
 ### Changed

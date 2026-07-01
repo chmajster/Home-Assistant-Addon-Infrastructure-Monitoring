@@ -135,8 +135,19 @@ button, input, select, textarea { font: inherit; }
   display: flex;
   align-items: center;
   gap: 10px;
+  width: 100%;
   min-height: 48px;
   padding: 8px 10px;
+  border: 0;
+  background: transparent;
+  color: var(--text-primary);
+  text-align: left;
+  justify-content: flex-start;
+}
+
+.brand:hover {
+  background: var(--sidebar-hover-bg);
+  border-color: transparent;
 }
 
 .brand-mark {
@@ -144,10 +155,40 @@ button, input, select, textarea { font: inherit; }
   height: 38px;
   display: inline-grid;
   place-items: center;
-  border-radius: var(--radius);
-  background: var(--accent);
+  flex: 0 0 38px;
+  border-radius: 12px;
+  background: var(--primary-soft);
   color: white;
-  font-weight: 900;
+  color: var(--primary);
+  border: 1px solid color-mix(in srgb, var(--primary) 24%, transparent);
+}
+
+.brand-icon {
+  width: 22px;
+  height: 22px;
+  display: block;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  fill: none;
+}
+
+.brand strong {
+  display: block;
+  color: var(--text-primary);
+  font-size: 14px;
+  line-height: 1.35;
+  font-weight: 720;
+}
+
+.brand small {
+  display: block;
+  margin-top: 2px;
+  color: var(--sidebar-muted);
+  font-size: 12px;
+  line-height: 1.35;
+  font-weight: 500;
 }
 
 .side-nav {
@@ -474,7 +515,7 @@ textarea, pre, code { font-family: ui-monospace, SFMono-Regular, Consolas, "Libe
 .card {
   position: relative;
   padding: 15px;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .card.inactive { opacity: 0.7; }
@@ -836,27 +877,151 @@ textarea, pre, code { font-family: ui-monospace, SFMono-Regular, Consolas, "Libe
   font-weight: 500;
 }
 
+.detail-history-panel {
+  padding: 18px;
+}
+
+.detail-history-head {
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.detail-history-head p {
+  margin-top: 4px;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.history-pager {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.history-pager span {
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.4;
+  min-width: 86px;
+  text-align: center;
+}
+
+.detail-history-filters {
+  display: grid;
+  grid-template-columns: auto repeat(4, minmax(130px, 1fr)) minmax(220px, 1.3fr);
+  gap: 10px;
+  align-items: end;
+  margin: 14px 0;
+}
+
+.detail-history-filters .quick-actions {
+  align-self: end;
+  margin: 0;
+}
+
+.detail-history-filters label {
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.history-date {
+  display: grid;
+  gap: 2px;
+}
+
+.history-date strong {
+  color: var(--text-primary);
+  font-size: 13px;
+  line-height: 1.25;
+  font-weight: 650;
+}
+
+.history-date span {
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.25;
+}
+
+.history-message {
+  display: inline-block;
+  max-width: min(460px, 42vw);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+}
+
+.history-skeleton span {
+  display: block;
+  width: 100%;
+  height: 16px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--surface-muted), var(--surface-hover), var(--surface-muted));
+  background-size: 220% 100%;
+  animation: skeleton-shimmer 1.2s ease-in-out infinite;
+}
+
+@keyframes skeleton-shimmer {
+  from { background-position: 100% 0; }
+  to { background-position: -100% 0; }
+}
+
 .action-menu { position: relative; }
 .action-menu summary {
-  min-height: var(--control-height);
+  min-height: 40px;
   display: inline-flex;
   align-items: center;
   border: 1px solid var(--border);
   background: var(--surface-elevated);
-  border-radius: var(--radius);
-  padding: 8px 12px;
-  font-weight: 700;
+  border-radius: 9px;
+  padding: 0 14px;
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 600;
   cursor: pointer;
   list-style: none;
 }
 .action-menu summary::-webkit-details-marker { display: none; }
-.action-menu[open] { z-index: 5; }
-.action-menu button {
-  display: block;
-  width: 190px;
+.action-menu[open] { z-index: 20; }
+.action-menu-list {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 30;
+  display: grid;
+  gap: 4px;
+  min-width: 210px;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+.action-menu:not([open]) .action-menu-list {
+  display: none;
+}
+.action-menu-list button {
+  width: 100%;
+  min-height: 36px;
   justify-content: flex-start;
-  margin-top: 6px;
+  border-color: transparent;
+  background: transparent;
   text-align: left;
+  white-space: nowrap;
+}
+.action-menu-list button:hover {
+  background: var(--surface-hover);
+  border-color: transparent;
+}
+.action-menu-list .danger-action {
+  color: var(--danger);
+}
+.action-menu-list .danger-action:hover {
+  background: var(--danger-soft);
+  border-color: color-mix(in srgb, var(--danger) 24%, transparent);
 }
 
 .list,
@@ -1243,6 +1408,13 @@ pre {
   .dashboard-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .detail-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .detail-content-grid { grid-template-columns: 1fr; }
+  .detail-history-filters {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .detail-history-filters .quick-actions,
+  .detail-history-filters .grow {
+    grid-column: 1 / -1;
+  }
 }
 
 @media (max-width: 880px) {
@@ -1273,6 +1445,22 @@ pre {
   .detail-actions .detail-search {
     width: 100%;
   }
+  .action-menu-list {
+    left: 0;
+    right: auto;
+    width: 100%;
+  }
+  .detail-history-head,
+  .history-pager {
+    justify-content: stretch;
+  }
+  .history-pager button {
+    flex: 1 1 120px;
+  }
+  .history-pager span {
+    flex: 1 1 100%;
+    order: -1;
+  }
   .dashboard-grid { grid-template-columns: 1fr; }
   .span-2 { grid-column: span 1; }
   .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -1288,6 +1476,8 @@ pre {
   main { padding: 16px 12px 86px; }
   .detail-metrics,
   .detail-slo-grid { grid-template-columns: 1fr; }
+  .detail-history-filters { grid-template-columns: 1fr; }
+  .history-message { max-width: 66vw; }
   .detail-metric-card,
   .detail-slo-card { min-height: auto; }
 }

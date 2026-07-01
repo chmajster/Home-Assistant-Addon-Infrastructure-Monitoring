@@ -26,6 +26,16 @@ const state = {
   incidentStatusFilter: "all",
   incidentMonitorFilter: "",
   lastRefreshedAt: null,
+  detailHistoryRows: [],
+  detailHistoryPage: 1,
+  detailHistoryPageSize: 100,
+  detailHistoryFilters: {
+    from: "",
+    to: "",
+    status: "all",
+    search: "",
+    sort: "date_desc",
+  },
 };
 
 const API_BASE = window.location.pathname === "/" ? "" : window.location.pathname.replace(/\/$/, "");
@@ -66,8 +76,10 @@ function bindNavigation() {
     });
   });
   $("#refreshBtn").addEventListener("click", manualRefresh);
-  $("#themeBtn").addEventListener("click", toggleTheme);
+  $("#brandHomeBtn")?.addEventListener("click", () => showView("dashboard"));
   $("#themeMode")?.addEventListener("change", (event) => applyTheme(event.currentTarget.value));
+  document.addEventListener("click", closeActionMenusOnOutsideClick);
+  document.addEventListener("keydown", closeActionMenusOnEscape);
   $("#toast").addEventListener("click", hideToast);
   $("#detailBackBtn").addEventListener("click", () => showView("monitoring"));
   $("#testBackBtn").addEventListener("click", backFromMonitorTest);
@@ -95,6 +107,7 @@ function bindNavigation() {
   $("#detailSnapshotsBtn").addEventListener("click", () => {
     if (state.selectedMonitorId) showSnapshots(state.selectedMonitorId);
   });
+  bindDetailHistoryControls();
   $$("[data-open-form]").forEach((button) => {
     button.addEventListener("click", () => openMonitorForm({ type: button.dataset.openForm }));
   });
@@ -197,6 +210,48 @@ function bindForms() {
   });
 }
 
+function bindDetailHistoryControls() {
+  $("#detailHistoryPrev")?.addEventListener("click", () => {
+    if (state.detailHistoryPage <= 1) return;
+    state.detailHistoryPage -= 1;
+    renderDetailHistoryTable();
+  });
+  $("#detailHistoryNext")?.addEventListener("click", () => {
+    state.detailHistoryPage += 1;
+    renderDetailHistoryTable();
+  });
+  $("#detailHistoryFrom")?.addEventListener("change", (event) => updateDetailHistoryFilter("from", event.currentTarget.value));
+  $("#detailHistoryTo")?.addEventListener("change", (event) => updateDetailHistoryFilter("to", event.currentTarget.value));
+  $("#detailHistoryStatus")?.addEventListener("change", (event) => updateDetailHistoryFilter("status", event.currentTarget.value));
+  $("#detailHistorySort")?.addEventListener("change", (event) => updateDetailHistoryFilter("sort", event.currentTarget.value));
+  $("#detailHistorySearch")?.addEventListener("input", debounce((event) => {
+    updateDetailHistoryFilter("search", event.currentTarget.value.trim().toLowerCase());
+  }, 160));
+  $$("[data-detail-history-range]").forEach((button) => {
+    button.addEventListener("click", () => applyDetailHistoryRange(button.dataset.detailHistoryRange));
+  });
+}
+
+function updateDetailHistoryFilter(key, value) {
+  state.detailHistoryFilters[key] = value;
+  state.detailHistoryPage = 1;
+  renderDetailHistoryTable();
+}
+
+function applyDetailHistoryRange(range) {
+  const now = new Date();
+  const from = new Date(now);
+  if (range === "24h") from.setDate(from.getDate() - 1);
+  if (range === "7d") from.setDate(from.getDate() - 7);
+  if (range === "30d") from.setDate(from.getDate() - 30);
+  state.detailHistoryFilters.from = range === "all" ? "" : toDateInputValue(from);
+  state.detailHistoryFilters.to = "";
+  state.detailHistoryPage = 1;
+  if ($("#detailHistoryFrom")) $("#detailHistoryFrom").value = state.detailHistoryFilters.from;
+  if ($("#detailHistoryTo")) $("#detailHistoryTo").value = "";
+  renderDetailHistoryTable();
+}
+
 async function refreshAll() {
   const [summary, monitors, groups, settings, monitorTypes, presets, diagnostics, incidents] = await Promise.all([
     api("/api/summary"),
@@ -291,7 +346,6 @@ function applyTheme(theme) {
   document.documentElement.dataset.theme = effective;
   localStorage.setItem("monitoring-theme", requested);
   if ($("#themeMode")) $("#themeMode").value = requested;
-  $("#themeBtn").textContent = effective === "dark" ? "Motyw: ciemny" : "Motyw: jasny";
 }
 
 function initDensity() {
@@ -1030,14 +1084,32 @@ function renderCardActions(monitor) {
   return `
     <details class="action-menu">
       <summary aria-label="Akcje serwisowe monitora ${escapeHtml(monitor.name)}">Serwis</summary>
-      <button data-action="maintenance" data-id="${monitor.id}">Ustaw serwis</button>
-      ${monitor.maintenance_until ? `<button data-action="maint-clear" data-id="${monitor.id}">Wyłącz serwis</button>` : ""}
+      <div class="action-menu-list">
+        <button data-action="maintenance" data-id="${monitor.id}">Ustaw serwis</button>
+        ${monitor.maintenance_until ? `<button data-action="maint-clear" data-id="${monitor.id}">Wyłącz serwis</button>` : ""}
+      </div>
     </details>
     <details class="action-menu">
       <summary aria-label="Więcej akcji monitora ${escapeHtml(monitor.name)}">Więcej</summary>
-      <button data-action="toggle-enabled" data-id="${monitor.id}">${monitor.enabled ? "Wyłącz monitoring" : "Włącz monitoring"}</button>
-      ${monitor.type === "http_hash" ? `<button data-action="snapshots" data-id="${monitor.id}">Zmiany</button>` : ""}
-      <button data-action="delete" data-id="${monitor.id}" class="danger-action">Usuń</button>
+      <div class="action-menu-list">
+        <button data-action="toggle-enabled" data-id="${monitor.id}">${monitor.enabled ? "Wyłącz monitoring" : "Włącz monitoring"}</button>
+        ${monitor.type === "http_hash" ? `<button data-action="snapshots" data-id="${monitor.id}">Zmiany</button>` : ""}
+        <button data-action="delete" data-id="${monitor.id}" class="danger-action">Usuń</button>
+      </div>
+    </details>
+  `;
+}
+
+function renderDetailActions(monitor) {
+  return `
+    <button data-action="maintenance" data-id="${monitor.id}" type="button">Serwis</button>
+    <details class="action-menu detail-more-menu">
+      <summary aria-label="Więcej akcji monitora ${escapeHtml(monitor.name)}">Więcej</summary>
+      <div class="action-menu-list">
+        <button data-action="toggle-enabled" data-id="${monitor.id}" type="button">${monitor.enabled ? "Wyłącz monitoring" : "Włącz monitoring"}</button>
+        ${monitor.type === "http_hash" ? `<button data-action="snapshots" data-id="${monitor.id}" type="button">Zmiany</button>` : ""}
+        <button data-action="delete" data-id="${monitor.id}" type="button" class="danger-action">Usuń</button>
+      </div>
     </details>
   `;
 }
@@ -1047,9 +1119,21 @@ function bindMonitorActions(root) {
     button.addEventListener("click", (event) => {
       event.preventDefault();
       event.stopPropagation();
+      event.currentTarget.closest("details.action-menu")?.removeAttribute("open");
       handleCardAction(event);
     });
   });
+}
+
+function closeActionMenusOnOutsideClick(event) {
+  $$("details.action-menu[open]").forEach((menu) => {
+    if (!menu.contains(event.target)) menu.removeAttribute("open");
+  });
+}
+
+function closeActionMenusOnEscape(event) {
+  if (event.key !== "Escape") return;
+  $$("details.action-menu[open]").forEach((menu) => menu.removeAttribute("open"));
 }
 
 function bindMonitorSelection(root) {
@@ -1416,16 +1500,19 @@ async function showMonitorDetails(id) {
   renderMonitorDetailsShell(id);
   const monitor = state.monitors.find((item) => item.id === id);
   if (!monitor) return;
-  const [slo, history, snapshots, timeline] = await Promise.all([
-    api(`/api/slo?monitor_id=${id}`),
-    api(`/api/history?monitor_id=${id}&limit=80`),
-    monitor.type === "http_hash" ? api(`/api/monitors/${id}/snapshots`) : Promise.resolve([]),
-    api(`/api/monitors/${id}/timeline?limit=120`),
-  ]);
-  renderDetailSlo(slo);
-  renderDetailHistory(history);
-  renderDetailSnapshots(snapshots);
-  renderDetailTimeline(timeline);
+  renderDetailHistoryLoading();
+  try {
+    const [slo, history, snapshots] = await Promise.all([
+      api(`/api/slo?monitor_id=${id}`),
+      api(`/api/history?monitor_id=${id}&limit=1000`),
+      monitor.type === "http_hash" ? api(`/api/monitors/${id}/snapshots`) : Promise.resolve([]),
+    ]);
+    renderDetailSlo(slo);
+    renderDetailHistory(history);
+    renderDetailSnapshots(snapshots);
+  } catch (error) {
+    renderDetailHistoryError(error);
+  }
 }
 
 function renderMonitorDetailsShell(id) {
@@ -1437,13 +1524,11 @@ function renderMonitorDetailsShell(id) {
   }
   $("#detailTitle").textContent = monitor.name;
   $("#detailSubtitle").textContent = `${typeLabel(monitor.type)} · ${monitor.target}`;
-  if ($("#detailTimeline")) {
-    $("#detailTimeline").className = "timeline empty";
-    $("#detailTimeline").innerHTML = "Ladowanie...";
-  }
+  resetDetailHistoryState();
+  renderDetailHistoryLoading();
   $("#detailMonitorSearch").value = detailMonitorValue(monitor);
-  $("#detailExtraActions").innerHTML = renderCardActions(monitor);
-  $$("[data-action]", $("#detailExtraActions")).forEach((button) => button.addEventListener("click", handleCardAction));
+  $("#detailExtraActions").innerHTML = renderDetailActions(monitor);
+  bindMonitorActions($("#detailExtraActions"));
   $("#detailSnapshotsSection").classList.toggle("hidden", monitor.type !== "http_hash");
   $("#detailMetrics").innerHTML = [
     { label: "Status", value: `<span class="detail-status-badge ${badgeClass(monitor.status)}">${escapeHtml(monitor.status || "-")}</span>` },
@@ -1480,11 +1565,9 @@ function renderMonitorDetailsShell(id) {
 
 function renderDetailDate(value) {
   if (!value) return "-";
-  const formatted = formatDate(value);
-  if (!formatted || formatted === "-") return "-";
-  const parts = formatted.split(",").map((part) => part.trim()).filter(Boolean);
-  if (parts.length < 2) return escapeHtml(formatted);
-  return `<span class="detail-date"><strong>${escapeHtml(parts[0])}</strong><span>${escapeHtml(parts.slice(1).join(", "))}</span></span>`;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return escapeHtml(String(value));
+  return `<span class="detail-date"><strong>${date.toLocaleDateString("pl-PL")}</strong><span>${date.toLocaleTimeString("pl-PL")}</span></span>`;
 }
 
 function renderDetailValue(value, variant = "") {
@@ -1507,30 +1590,151 @@ function renderDetailSlo(slo) {
 }
 
 function renderDetailHistory(rows) {
+  state.detailHistoryRows = rows || [];
+  state.detailHistoryPage = 1;
+  syncDetailHistoryInputs();
+  renderDetailHistoryTable();
+}
+
+function renderDetailHistoryLoading() {
+  state.detailHistoryRows = [];
+  if ($("#detailHistorySummary")) $("#detailHistorySummary").textContent = "Ładowanie historii odpowiedzi...";
+  if ($("#detailHistoryPage")) $("#detailHistoryPage").textContent = "Strona 1";
+  if ($("#detailHistoryPrev")) $("#detailHistoryPrev").disabled = true;
+  if ($("#detailHistoryNext")) $("#detailHistoryNext").disabled = true;
   const body = $("#detailHistoryRows");
-  if (!rows.length) {
-    body.innerHTML = '<tr><td colspan="8" class="empty">Brak historii odpowiedzi.</td></tr>';
+  if (!body) return;
+  body.innerHTML = Array.from({ length: 5 }).map(() => `
+    <tr class="history-skeleton">
+      <td><span></span></td><td><span></span></td><td><span></span></td>
+      <td><span></span></td><td><span></span></td><td><span></span></td>
+    </tr>
+  `).join("");
+}
+
+function renderDetailHistoryError(error) {
+  if ($("#detailHistorySummary")) $("#detailHistorySummary").textContent = "Nie udało się załadować historii odpowiedzi.";
+  if ($("#detailHistoryRows")) {
+    $("#detailHistoryRows").innerHTML = `<tr><td colspan="6" class="empty">${escapeHtml(error?.message || "Błąd ładowania historii.")}</td></tr>`;
+  }
+}
+
+function renderDetailHistoryTable() {
+  const body = $("#detailHistoryRows");
+  if (!body) return;
+  const filtered = sortDetailHistoryRows(filterDetailHistoryRows(state.detailHistoryRows));
+  const total = filtered.length;
+  const pages = Math.max(1, Math.ceil(total / state.detailHistoryPageSize));
+  state.detailHistoryPage = Math.min(Math.max(state.detailHistoryPage, 1), pages);
+  const start = total ? (state.detailHistoryPage - 1) * state.detailHistoryPageSize : 0;
+  const pageRows = filtered.slice(start, start + state.detailHistoryPageSize);
+  const end = start + pageRows.length;
+  if ($("#detailHistorySummary")) {
+    $("#detailHistorySummary").textContent = total
+      ? `${start + 1}-${end} z ${total} wpisów`
+      : "Brak wpisów historii dla wybranych filtrów";
+  }
+  if ($("#detailHistoryPage")) $("#detailHistoryPage").textContent = `Strona ${state.detailHistoryPage} z ${pages}`;
+  if ($("#detailHistoryPrev")) $("#detailHistoryPrev").disabled = state.detailHistoryPage <= 1;
+  if ($("#detailHistoryNext")) $("#detailHistoryNext").disabled = state.detailHistoryPage >= pages;
+  if (!pageRows.length) {
+    body.innerHTML = '<tr><td colspan="6" class="empty">Brak wpisów historii dla wybranych filtrów.</td></tr>';
     return;
   }
-  body.innerHTML = rows.map((row) => {
+  body.innerHTML = pageRows.map((row) => {
     const details = parseDetails(row.details_json);
-    const detailText = [
-      details.final_url ? `URL: ${details.final_url}` : "",
-      details.bytes ? `Rozmiar: ${details.bytes} B` : "",
-      details.expected_status_codes ? `Oczekiwane: ${details.expected_status_codes.join(", ")}` : "",
-      details.response_hash ? `Hash: ${String(details.response_hash).slice(0, 12)}` : "",
-    ].filter(Boolean).join(" · ");
+    const message = detailHistoryMessage(row, details);
+    const latency = details.duration_ms ?? details.latency_ms ?? details.elapsed_ms ?? details.total_ms ?? "";
     return `<tr>
-      <td>${formatDate(row.checked_at)}</td>
-      <td><span class="badge ${badgeClass(row.status)}">${escapeHtml(row.status)}</span></td>
+      <td>${renderHistoryDate(row.checked_at)}</td>
+      <td><span class="badge ${badgeClass(row.status)}">${escapeHtml(row.status || "-")}</span></td>
       <td>${row.response_ms ? Number(row.response_ms).toFixed(1) + " ms" : "-"}</td>
       <td>${row.http_status || "-"}</td>
-      <td>${row.content_changed ? "tak" : "nie"}</td>
-      <td>${hashHtml(row.content_hash || details.current_hash)}</td>
-      <td>${escapeHtml(detailText || "-")}</td>
-      <td>${escapeHtml(row.error || "-")}</td>
+      <td><span class="history-message" title="${escapeHtml(message)}">${escapeHtml(message || "-")}</span></td>
+      <td>${latency ? `${Number(latency).toFixed(1)} ms` : "-"}</td>
     </tr>`;
   }).join("");
+}
+
+function filterDetailHistoryRows(rows) {
+  const filters = state.detailHistoryFilters;
+  const from = filters.from ? new Date(`${filters.from}T00:00:00`) : null;
+  const to = filters.to ? new Date(`${filters.to}T23:59:59`) : null;
+  return rows.filter((row) => {
+    const checkedAt = row.checked_at ? new Date(row.checked_at) : null;
+    if (from && checkedAt && checkedAt < from) return false;
+    if (to && checkedAt && checkedAt > to) return false;
+    if (filters.status !== "all") {
+      const status = String(row.status || "").toLowerCase();
+      if (filters.status === "online" && !isSuccessStatus(status)) return false;
+      if (filters.status === "offline" && status !== "offline") return false;
+      if (filters.status === "error" && !isErrorStatus(status)) return false;
+    }
+    if (filters.search) {
+      const details = parseDetails(row.details_json);
+      const haystack = [
+        row.status,
+        row.http_status,
+        row.response_ms,
+        row.error,
+        detailHistoryMessage(row, details),
+      ].join(" ").toLowerCase();
+      if (!haystack.includes(filters.search)) return false;
+    }
+    return true;
+  });
+}
+
+function sortDetailHistoryRows(rows) {
+  const sorted = [...rows];
+  const numeric = (value) => value === null || value === undefined || value === "" ? Number.POSITIVE_INFINITY : Number(value);
+  sorted.sort((a, b) => {
+    if (state.detailHistoryFilters.sort === "date_asc") return new Date(a.checked_at || 0) - new Date(b.checked_at || 0);
+    if (state.detailHistoryFilters.sort === "status") return String(a.status || "").localeCompare(String(b.status || ""));
+    if (state.detailHistoryFilters.sort === "response") return numeric(a.response_ms) - numeric(b.response_ms);
+    if (state.detailHistoryFilters.sort === "http") return numeric(a.http_status) - numeric(b.http_status);
+    return new Date(b.checked_at || 0) - new Date(a.checked_at || 0);
+  });
+  return sorted;
+}
+
+function detailHistoryMessage(row, details = parseDetails(row.details_json)) {
+  return [
+    row.error || "",
+    details.error_message || "",
+    details.final_url ? `URL: ${details.final_url}` : "",
+    details.bytes ? `Rozmiar: ${details.bytes} B` : "",
+    details.expected_status_codes ? `Oczekiwane: ${formatDetailListValue(details.expected_status_codes)}` : "",
+    details.response_hash ? `Hash: ${String(details.response_hash).slice(0, 12)}` : "",
+    row.content_changed ? "Zmieniona zawartość" : "",
+  ].filter(Boolean).join(" · ");
+}
+
+function formatDetailListValue(value) {
+  return Array.isArray(value) ? value.join(", ") : String(value);
+}
+
+function renderHistoryDate(value) {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return escapeHtml(String(value));
+  return `<span class="history-date"><strong>${date.toLocaleDateString("pl-PL")}</strong><span>${date.toLocaleTimeString("pl-PL")}</span></span>`;
+}
+
+function resetDetailHistoryState() {
+  state.detailHistoryRows = [];
+  state.detailHistoryPage = 1;
+  state.detailHistoryFilters = { from: "", to: "", status: "all", search: "", sort: "date_desc" };
+  syncDetailHistoryInputs();
+}
+
+function syncDetailHistoryInputs() {
+  const filters = state.detailHistoryFilters;
+  if ($("#detailHistoryFrom")) $("#detailHistoryFrom").value = filters.from;
+  if ($("#detailHistoryTo")) $("#detailHistoryTo").value = filters.to;
+  if ($("#detailHistoryStatus")) $("#detailHistoryStatus").value = filters.status;
+  if ($("#detailHistorySort")) $("#detailHistorySort").value = filters.sort;
+  if ($("#detailHistorySearch")) $("#detailHistorySearch").value = filters.search;
 }
 
 function renderDetailSnapshots(snapshots) {
@@ -1548,16 +1752,6 @@ function renderDetailSnapshots(snapshots) {
       <span>${escapeHtml((snapshot.raw_excerpt || snapshot.diff || "").slice(0, 220))}</span>
     </div>
   `).join("");
-}
-
-function renderDetailTimeline(items) {
-  renderList("#detailTimeline", items || [], (item) => `
-    <div class="list-item">
-      <strong>${escapeHtml(item.title || item.type || "Zdarzenie")}</strong>
-      <small>${formatDate(item.timestamp)}${item.status ? ` · ${escapeHtml(item.status)}` : ""}</small>
-      ${item.description ? `<span>${escapeHtml(item.description)}</span>` : ""}
-    </div>
-  `);
 }
 
 function parseDetails(value) {
@@ -1720,16 +1914,16 @@ async function applyMaintenanceDuration(minutes) {
   const form = $("#maintenanceForm");
   const id = Number(form.elements.id.value);
   if (!id) return;
-  await setMonitorMaintenance(id, minutes);
   $("#maintenanceDialog").close();
+  await setMonitorMaintenance(id, minutes);
 }
 
 async function clearMaintenanceFromDialog() {
   const form = $("#maintenanceForm");
   const id = Number(form.elements.id.value);
   if (!id) return;
-  await clearMonitorMaintenance(id);
   $("#maintenanceDialog").close();
+  await clearMonitorMaintenance(id);
 }
 
 async function setMonitorMaintenance(id, minutes) {
@@ -2424,6 +2618,13 @@ function toDatetimeLocalValue(value) {
   if (Number.isNaN(date.getTime())) return "";
   const localDate = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
   return localDate.toISOString().slice(0, 16);
+}
+
+function toDateInputValue(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const localDate = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+  return localDate.toISOString().slice(0, 10);
 }
 
 function hashHtml(value) {

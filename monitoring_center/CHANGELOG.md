@@ -2,6 +2,14 @@
 
 All notable changes to the **Monitoring Center** Home Assistant add-on are documented here.
 
+## [0.7.5] - 2026-07-02
+
+### Changed
+
+- Refined the logo/sidebar, removed duplicate theme controls, and polished the monitor action dropdown.
+- Reworked monitor response history with filters, sorting, 100-row pagination, and loading state.
+- Bumped add-on and application metadata version to `0.7.5`.
+
 ## [0.7.4] - 2026-07-02
 
 ### Changed
