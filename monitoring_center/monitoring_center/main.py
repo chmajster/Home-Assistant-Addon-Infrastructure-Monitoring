@@ -222,6 +222,17 @@ async def snapshots(monitor_id: int) -> list[dict[str, Any]]:
     return service.get_snapshots(monitor_id)
 
 
+@app.get("/api/monitors/{monitor_id}/timeline")
+async def monitor_timeline(
+    monitor_id: int,
+    limit: int = Query(default=120, ge=1, le=500),
+) -> list[dict[str, Any]]:
+    try:
+        return service.get_monitor_timeline(monitor_id, limit=limit)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Monitor not found") from exc
+
+
 @app.get("/api/history")
 async def history(
     monitor_id: int | None = None,
@@ -252,6 +263,15 @@ async def cleanup_history() -> dict[str, str]:
 @app.get("/api/events")
 async def events() -> list[dict[str, Any]]:
     return service.get_events()
+
+
+@app.get("/api/incidents")
+async def incidents(
+    monitor_id: int | None = None,
+    active_only: bool = False,
+    limit: int = Query(default=100, ge=1, le=500),
+) -> list[dict[str, Any]]:
+    return service.list_incidents(limit=limit, active_only=active_only, monitor_id=monitor_id)
 
 
 @app.get("/api/settings")

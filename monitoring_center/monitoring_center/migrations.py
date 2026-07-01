@@ -5,7 +5,7 @@ import shutil
 from .database import Database, dumps_json, loads_json
 
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 
 
 def migrate(db: Database) -> None:
@@ -46,6 +46,9 @@ def migrate(db: Database) -> None:
     if version < 8:
         _migration_008(db)
         db.execute("INSERT INTO schema_migrations(version) VALUES (?)", (8,))
+    if version < 9:
+        _migration_009(db)
+        db.execute("INSERT INTO schema_migrations(version) VALUES (?)", (9,))
 
 
 def _backup_database(db: Database) -> None:
@@ -332,5 +335,31 @@ def _migration_008(db: Database) -> None:
         ALTER TABLE monitors ADD COLUMN failure_count INTEGER NOT NULL DEFAULT 0;
         ALTER TABLE monitors ADD COLUMN recovery_count INTEGER NOT NULL DEFAULT 0;
         ALTER TABLE monitors ADD COLUMN last_raw_status TEXT;
+        """
+    )
+
+
+def _migration_009(db: Database) -> None:
+    db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS incidents (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            monitor_id INTEGER NOT NULL,
+            started_at TEXT NOT NULL,
+            ended_at TEXT,
+            status TEXT NOT NULL DEFAULT 'open',
+            root_status TEXT NOT NULL,
+            last_error TEXT,
+            check_count INTEGER NOT NULL DEFAULT 1,
+            duration_seconds REAL NOT NULL DEFAULT 0,
+            FOREIGN KEY(monitor_id) REFERENCES monitors(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_incidents_monitor_time
+            ON incidents(monitor_id, started_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_incidents_status_time
+            ON incidents(status, started_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_incidents_open
+            ON incidents(monitor_id, status, ended_at);
         """
     )

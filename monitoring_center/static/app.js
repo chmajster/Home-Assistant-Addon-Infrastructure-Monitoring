@@ -4,6 +4,8 @@ const state = {
   monitorTypes: [],
   presets: [],
   summary: null,
+  diagnostics: null,
+  incidents: [],
   settings: null,
   selectedMonitorId: null,
   currentTest: null,
@@ -11,17 +13,33 @@ const state = {
   monitorTypeFilter: "all",
   monitorStatusFilter: "all",
   monitorGroupFilter: "all",
+  monitorMaintenanceFilter: "all",
+  monitorEnabledFilter: "all",
   monitorSort: "name",
   monitorView: "cards",
   dashboardTypeFilter: "all",
+  selectedMonitorIds: new Set(),
+  events: [],
+  eventTypeFilter: "",
+  eventQuery: "",
+  incidentStatusFilter: "all",
+  incidentMonitorFilter: "",
   lastRefreshedAt: null,
 };
 
 const API_BASE = window.location.pathname === "/" ? "" : window.location.pathname.replace(/\/$/, "");
 const URL_MONITOR_TYPES = ["http_status", "http_hash", "rest_api"];
-const WEBSITE_MONITOR_TYPES = URL_MONITOR_TYPES;
-const DEVICE_MONITOR_TYPES = ["ping_host", "tcp_port", "mqtt_monitor"];
-const HA_MONITOR_TYPES = ["ha_entity"];
+const MONITOR_TYPE_CATEGORIES = {
+  ping_host: "network",
+  tcp_port: "protocol",
+  dns_lookup: "protocol",
+  ssl_certificate: "protocol",
+  mqtt_monitor: "protocol",
+  http_status: "website",
+  http_hash: "website",
+  rest_api: "website",
+  ha_entity: "home_assistant",
+};
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
@@ -29,6 +47,7 @@ let testRunTimer;
 
 document.addEventListener("DOMContentLoaded", () => {
   initTheme();
+  initDensity();
   bindNavigation();
   bindForms();
   refreshAll();
@@ -41,12 +60,15 @@ function bindNavigation() {
       showView(button.dataset.tab);
       if (button.dataset.tab === "diagnostics") loadDiagnostics();
       if (button.dataset.tab === "history") loadHistory();
+      if (button.dataset.tab === "events") loadEvents();
+      if (button.dataset.tab === "incidents") renderIncidents();
     });
   });
   $("#refreshBtn").addEventListener("click", manualRefresh);
   $("#themeBtn").addEventListener("click", toggleTheme);
+  $("#themeMode")?.addEventListener("change", (event) => applyTheme(event.currentTarget.value));
   $("#toast").addEventListener("click", hideToast);
-  $("#detailBackBtn").addEventListener("click", () => showView("devices"));
+  $("#detailBackBtn").addEventListener("click", () => showView("monitoring"));
   $("#testBackBtn").addEventListener("click", backFromMonitorTest);
   $("#testRepeatBtn").addEventListener("click", () => {
     if (state.currentTest?.monitorId) startMonitorTestRun(state.currentTest.monitorId, state.currentTest.returnView);
@@ -83,8 +105,12 @@ function bindForms() {
   $("#testMonitorBtn").addEventListener("click", testMonitorFromForm);
   $("#groupForm").addEventListener("submit", saveGroup);
   $("#monitorTypeSelect").addEventListener("change", () => renderTypeFields($("#monitorTypeSelect").value));
+  $("#monitorForm").addEventListener("input", updateConfigPreview);
+  $("#monitorForm").addEventListener("change", updateConfigPreview);
   $("#applyPresetBtn").addEventListener("click", applyPreset);
   $("#settingsForm").addEventListener("submit", saveSettings);
+  $("#settingsResetBtn")?.addEventListener("click", renderSettings);
+  $("#densityMode")?.addEventListener("change", (event) => applyDensity(event.currentTarget.value));
   $("#maintenanceForm").addEventListener("submit", saveMaintenanceFromDialog);
   $$("[data-maint-duration]").forEach((button) => {
     button.addEventListener("click", () => applyMaintenanceDuration(Number(button.dataset.maintDuration)));
@@ -98,44 +124,87 @@ function bindForms() {
   });
   $("#exportBtn").addEventListener("click", exportConfig);
   $("#importFile").addEventListener("change", importConfig);
-  $("#monitorSearch").addEventListener("input", (event) => {
+  $("#monitorSearch").addEventListener("input", debounce((event) => {
     state.monitorQuery = event.currentTarget.value.trim().toLowerCase();
+    persistMonitorUiState();
     renderMonitorLists();
-  });
+  }, 180));
   $("#monitorTypeFilter").addEventListener("change", (event) => {
     state.monitorTypeFilter = event.currentTarget.value;
+    persistMonitorUiState();
     renderMonitorLists();
   });
   $("#monitorStatusFilter").addEventListener("change", (event) => {
     state.monitorStatusFilter = event.currentTarget.value;
+    persistMonitorUiState();
     renderMonitorLists();
   });
   $("#monitorGroupFilter").addEventListener("change", (event) => {
     state.monitorGroupFilter = event.currentTarget.value;
+    persistMonitorUiState();
+    renderMonitorLists();
+  });
+  $("#monitorMaintenanceFilter")?.addEventListener("change", (event) => {
+    state.monitorMaintenanceFilter = event.currentTarget.value;
+    persistMonitorUiState();
+    renderMonitorLists();
+  });
+  $("#monitorEnabledFilter")?.addEventListener("change", (event) => {
+    state.monitorEnabledFilter = event.currentTarget.value;
+    persistMonitorUiState();
     renderMonitorLists();
   });
   $("#monitorSort").addEventListener("change", (event) => {
     state.monitorSort = event.currentTarget.value;
+    persistMonitorUiState();
     renderMonitorLists();
   });
   $("#monitorView").addEventListener("change", (event) => {
     state.monitorView = event.currentTarget.value;
+    persistMonitorUiState();
     renderMonitorLists();
   });
+  $("#selectAllMonitors")?.addEventListener("change", toggleVisibleMonitorSelection);
+  $$("[data-bulk-action]").forEach((button) => button.addEventListener("click", handleBulkAction));
   $("#dashboardTypeFilter").addEventListener("change", (event) => {
     state.dashboardTypeFilter = event.currentTarget.value;
     renderDashboard();
   });
+  $$("[data-history-range]").forEach((button) => button.addEventListener("click", applyHistoryRange));
+  $("#eventsRefreshBtn")?.addEventListener("click", loadEvents);
+  $("#eventTypeFilter")?.addEventListener("change", (event) => {
+    state.eventTypeFilter = event.currentTarget.value;
+    renderEvents();
+  });
+  $("#eventSearch")?.addEventListener("input", debounce((event) => {
+    state.eventQuery = event.currentTarget.value.trim().toLowerCase();
+    renderEvents();
+  }, 180));
+  $("#incidentStatusFilter")?.addEventListener("change", (event) => {
+    state.incidentStatusFilter = event.currentTarget.value;
+    renderIncidents();
+  });
+  $("#incidentMonitorFilter")?.addEventListener("change", (event) => {
+    state.incidentMonitorFilter = event.currentTarget.value;
+    renderIncidents();
+  });
+  $("#incidentsRefreshBtn")?.addEventListener("click", loadIncidents);
+  $("#diagnosticsRefreshBtn")?.addEventListener("click", loadDiagnostics);
+  $$("[data-dialog-close]").forEach((button) => {
+    button.addEventListener("click", () => $(`#${button.dataset.dialogClose}`)?.close());
+  });
 }
 
 async function refreshAll() {
-  const [summary, monitors, groups, settings, monitorTypes, presets] = await Promise.all([
+  const [summary, monitors, groups, settings, monitorTypes, presets, diagnostics, incidents] = await Promise.all([
     api("/api/summary"),
     api("/api/monitors"),
     api("/api/groups"),
     api("/api/settings"),
     api("/api/monitor-types"),
     api("/api/presets"),
+    api("/api/diagnostics"),
+    api("/api/incidents?limit=100"),
   ]);
   state.summary = summary;
   state.monitors = monitors;
@@ -143,7 +212,10 @@ async function refreshAll() {
   state.settings = settings;
   state.monitorTypes = monitorTypes;
   state.presets = presets;
+  state.diagnostics = diagnostics;
+  state.incidents = incidents;
   state.lastRefreshedAt = new Date().toISOString();
+  renderGlobalStatus();
   $("#lastRefreshAt").textContent = `Odświeżono: ${formatDate(state.lastRefreshedAt)}`;
   renderCategoryFilterOptions();
   renderDashboard();
@@ -153,8 +225,11 @@ async function refreshAll() {
   renderMonitorLists();
   renderGroups();
   renderHistoryMonitorOptions();
+  renderIncidentMonitorOptions();
+  renderIncidents();
   renderDetailMonitorOptions();
   renderSettings();
+  if ($("#events")?.classList.contains("active")) loadEvents();
   if ($("#monitorDetail").classList.contains("active") && state.selectedMonitorId) {
     renderMonitorDetailsShell(state.selectedMonitorId);
   }
@@ -198,20 +273,64 @@ function formatApiError(detail) {
 }
 
 function initTheme() {
-  const saved = localStorage.getItem("monitoring-theme") || "light";
+  const saved = localStorage.getItem("monitoring-theme") || "auto";
   applyTheme(saved);
 }
 
 function toggleTheme() {
-  const current = document.documentElement.dataset.theme === "dark" ? "dark" : "light";
+  const current = localStorage.getItem("monitoring-theme") || "auto";
   applyTheme(current === "dark" ? "light" : "dark");
 }
 
 function applyTheme(theme) {
-  const next = theme === "dark" ? "dark" : "light";
-  document.documentElement.dataset.theme = next;
-  localStorage.setItem("monitoring-theme", next);
-  $("#themeBtn").textContent = next === "dark" ? "Motyw: ciemny" : "Motyw: jasny";
+  const requested = ["auto", "dark", "light"].includes(theme) ? theme : "auto";
+  const prefersDark = window.matchMedia?.("(prefers-color-scheme: dark)")?.matches;
+  const effective = requested === "auto" ? (prefersDark ? "dark" : "light") : requested;
+  document.documentElement.dataset.theme = effective;
+  localStorage.setItem("monitoring-theme", requested);
+  if ($("#themeMode")) $("#themeMode").value = requested;
+  $("#themeBtn").textContent = effective === "dark" ? "Motyw: ciemny" : "Motyw: jasny";
+}
+
+function initDensity() {
+  applyDensity(localStorage.getItem("monitoring-density") || "comfortable");
+  restoreMonitorUiState();
+}
+
+function applyDensity(value) {
+  const density = value === "compact" ? "compact" : "comfortable";
+  document.documentElement.dataset.density = density;
+  localStorage.setItem("monitoring-density", density);
+  if ($("#densityMode")) $("#densityMode").value = density;
+}
+
+function restoreMonitorUiState() {
+  try {
+    const saved = JSON.parse(localStorage.getItem("monitoring-ui-state") || "{}");
+    Object.assign(state, {
+      monitorTypeFilter: saved.monitorTypeFilter || state.monitorTypeFilter,
+      monitorStatusFilter: saved.monitorStatusFilter || state.monitorStatusFilter,
+      monitorGroupFilter: saved.monitorGroupFilter || state.monitorGroupFilter,
+      monitorMaintenanceFilter: saved.monitorMaintenanceFilter || state.monitorMaintenanceFilter,
+      monitorEnabledFilter: saved.monitorEnabledFilter || state.monitorEnabledFilter,
+      monitorSort: saved.monitorSort || state.monitorSort,
+      monitorView: saved.monitorView || state.monitorView,
+      monitorQuery: saved.monitorQuery || state.monitorQuery,
+    });
+  } catch (_) {}
+}
+
+function persistMonitorUiState() {
+  localStorage.setItem("monitoring-ui-state", JSON.stringify({
+    monitorTypeFilter: state.monitorTypeFilter,
+    monitorStatusFilter: state.monitorStatusFilter,
+    monitorGroupFilter: state.monitorGroupFilter,
+    monitorMaintenanceFilter: state.monitorMaintenanceFilter,
+    monitorEnabledFilter: state.monitorEnabledFilter,
+    monitorSort: state.monitorSort,
+    monitorView: state.monitorView,
+    monitorQuery: state.monitorQuery,
+  }));
 }
 
 function showView(viewId, activeTab = viewId) {
@@ -220,11 +339,32 @@ function showView(viewId, activeTab = viewId) {
   $$(".tab").forEach((tab) => tab.classList.toggle("active", tab.dataset.tab === activeTab));
 }
 
+function renderGlobalStatus() {
+  const enabled = state.monitors.filter((monitor) => monitor.enabled && !monitor.maintenance_active);
+  const errors = enabled.filter((monitor) => isErrorStatus(monitor.status));
+  const warnings = enabled.filter((monitor) => monitor.status === "warning");
+  const status = errors.length ? "bad" : warnings.length ? "warning" : "ok";
+  const label = errors.length
+    ? `${errors.length} monitorów wymaga uwagi`
+    : warnings.length
+      ? `${warnings.length} ostrzeżeń`
+      : "Wszystkie aktywne monitory są stabilne";
+  $("#globalStatusDot")?.classList.remove("ok", "bad", "warning", "unknown");
+  $("#globalStatusDot")?.classList.add(status);
+  if ($("#globalStatusText")) $("#globalStatusText").textContent = label;
+  if ($("#dashboardSystemBadge")) {
+    $("#dashboardSystemBadge").className = `badge ${status === "bad" ? "bad" : status}`;
+    $("#dashboardSystemBadge").textContent = status === "bad" ? "problem" : status;
+  }
+  if ($("#sidebarSystemStatus")) $("#sidebarSystemStatus").textContent = `System: ${label}`;
+  if ($("#sidebarCounts")) $("#sidebarCounts").textContent = `${state.monitors.length} monitorów`;
+}
+
 function renderDashboard() {
   const summary = state.summary || {};
   const monitors = filterMonitorsByCategory(state.monitors, state.dashboardTypeFilter);
   const monitorIds = new Set(monitors.map((monitor) => monitor.id));
-  const recentFailures = (summary.recent_failures || []).filter((row) => monitorIds.has(row.monitor_id));
+  const recentIncidents = (state.incidents || []).filter((row) => monitorIds.has(row.monitor_id)).slice(0, 8);
   const recentChanges = (summary.recent_changes || []).filter((row) => monitorIds.has(row.monitor_id));
   const responseTimes = monitors
     .map((monitor) => monitor.last_response_ms)
@@ -240,10 +380,87 @@ function renderDashboard() {
   $("#metricMaintenance").textContent = monitors.filter((monitor) => monitor.maintenance_active).length;
   $("#metricDisabled").textContent = monitors.filter((monitor) => !monitor.enabled).length;
   $("#metricAvg").textContent = responseTimes.length ? `${average(responseTimes).toFixed(1)} ms` : "-";
-  renderList("#recentFailures", recentFailures, checkLine);
+  $("#metricUptime24").textContent = summary.slo?.["24h"]?.uptime_percent !== null && summary.slo?.["24h"]?.uptime_percent !== undefined
+    ? `${summary.slo["24h"].uptime_percent}%`
+    : "-";
+  $("#metricUptime7").textContent = summary.slo?.["7d"]?.uptime_percent !== null && summary.slo?.["7d"]?.uptime_percent !== undefined
+    ? `${summary.slo["7d"].uptime_percent}%`
+    : "-";
+  $("#metricIncidents").textContent = state.diagnostics?.incident_count ?? state.incidents.length ?? 0;
+  renderWorstMonitors(monitors);
+  renderSslExpiry(monitors);
+  renderSchedulerStatus();
+  renderIncidentList("#recentIncidents", recentIncidents);
   renderRecentChanges(recentChanges);
   renderAvailabilityChart();
   renderSlo(summary.slo || {});
+}
+
+function renderWorstMonitors(monitors) {
+  const ranked = [...monitors]
+    .filter((monitor) => monitor.enabled)
+    .sort((a, b) => {
+      const statusScore = Number(isErrorStatus(b.status)) - Number(isErrorStatus(a.status));
+      if (statusScore) return statusScore;
+      return Number(b.last_response_ms || 0) - Number(a.last_response_ms || 0);
+    })
+    .slice(0, 6);
+  renderList("#worstMonitors", ranked, (monitor) => `
+    <button class="list-item clickable-monitor" data-card-id="${monitor.id}" type="button">
+      <strong>${escapeHtml(monitor.name)}</strong>
+      <small>${escapeHtml(typeLabel(monitor.type))} · ${escapeHtml(monitor.status || "unknown")} · ${formatResponse(monitor.last_response_ms)}</small>
+    </button>
+  `);
+  bindMonitorOpeners($("#worstMonitors"));
+}
+
+function renderSchedulerStatus() {
+  const diagnostics = state.diagnostics || {};
+  const running = Boolean(diagnostics.scheduler_running);
+  const rows = [
+    ["Scheduler", running ? "dziala" : "nie dziala", running ? "ok" : "bad"],
+    ["Ostatni tick", diagnostics.scheduler_last_tick ? formatDate(diagnostics.scheduler_last_tick) : "-", ""],
+    ["Aktywne testy", diagnostics.active_job_count ?? diagnostics.active_jobs?.length ?? 0, ""],
+    ["Kolejka", diagnostics.queued_job_count ?? diagnostics.queued_jobs?.length ?? 0, ""],
+    ["Taski", diagnostics.scheduled_task_count ?? 0, ""],
+    ["Bledy schedulera", diagnostics.scheduler_error_count ?? 0, diagnostics.scheduler_error_count ? "bad" : ""],
+  ];
+  renderList("#schedulerStatus", rows, ([label, value, badge]) => `
+    <div class="list-item">
+      <strong>${escapeHtml(label)}</strong>
+      <small>${badge ? `<span class="badge ${badge}">${escapeHtml(String(value))}</span>` : escapeHtml(String(value))}</small>
+    </div>
+  `);
+}
+
+function renderIncidentList(selector, incidents) {
+  renderList(selector, incidents, (incident) => `
+    <button class="list-item clickable-monitor" data-card-id="${incident.monitor_id}" type="button">
+      <strong>${escapeHtml(incident.monitor_name || `Monitor ${incident.monitor_id}`)}</strong>
+      <small>${formatDate(incident.started_at)} · ${escapeHtml(incident.status)} · ${formatSeconds(incident.duration_seconds)}</small>
+      <span>${escapeHtml(incident.last_error || incident.root_status || "-")}</span>
+    </button>
+  `);
+  bindMonitorOpeners($(selector));
+}
+
+function renderSslExpiry(monitors) {
+  const items = monitors
+    .filter((monitor) => monitor.type === "ssl_certificate")
+    .map((monitor) => ({
+      monitor,
+      days: Number(monitor.config?.last_ssl_days_left ?? monitor.last_details?.days_left ?? Number.POSITIVE_INFINITY),
+    }))
+    .filter((item) => Number.isFinite(item.days) && item.days <= 45)
+    .sort((a, b) => a.days - b.days)
+    .slice(0, 8);
+  renderList("#sslExpiryList", items, ({ monitor, days }) => `
+    <button class="list-item clickable-monitor" data-card-id="${monitor.id}" type="button">
+      <strong>${escapeHtml(monitor.name)}</strong>
+      <small>${days} dni · ${escapeHtml(monitor.target)}</small>
+    </button>
+  `);
+  bindMonitorOpeners($("#sslExpiryList"));
 }
 
 function renderAvailabilityChart() {
@@ -264,11 +481,18 @@ function renderAvailabilityChart() {
 
 function renderMonitorLists() {
   const filtered = filterMonitorsForList(state.monitors);
+  state.selectedMonitorIds = new Set([...state.selectedMonitorIds].filter((id) => filtered.some((monitor) => monitor.id === id)));
   $("#monitorCountLabel").textContent = `${filtered.length} z ${state.monitors.length}`;
+  if ($("#monitorSearch")) $("#monitorSearch").value = state.monitorQuery;
+  if ($("#monitorMaintenanceFilter")) $("#monitorMaintenanceFilter").value = state.monitorMaintenanceFilter;
+  if ($("#monitorEnabledFilter")) $("#monitorEnabledFilter").value = state.monitorEnabledFilter;
+  if ($("#monitorSort")) $("#monitorSort").value = state.monitorSort;
+  if ($("#monitorView")) $("#monitorView").value = state.monitorView;
   $("#monitorList").classList.toggle("hidden", state.monitorView !== "cards");
   $("#monitorTableWrap").classList.toggle("hidden", state.monitorView !== "table");
-  if (state.monitorView === "table") renderMonitorTable(filtered);
-  else renderCards("#monitorList", filtered, { details: true });
+  if (state.monitorView === "table") renderMonitorTableModern(filtered);
+  else renderMonitorCardsModern("#monitorList", filtered);
+  renderBulkState(filtered);
 }
 
 function renderCategoryFilterOptions() {
@@ -292,9 +516,10 @@ function renderCategoryFilterOptions() {
 function monitorCategoryOptions() {
   const options = [
     { value: "all", label: "Wszystkie" },
-    { value: "devices", label: "Urządzenia" },
-    { value: "websites", label: "WWW" },
-    { value: "ha", label: "Home Assistant" },
+    { value: "network", label: "Sieć" },
+    { value: "website", label: "WWW / HTTP" },
+    { value: "home_assistant", label: "Home Assistant" },
+    { value: "protocol", label: "Protokoły" },
   ];
   if (state.monitors.some((monitor) => monitorCategory(monitor) === "other")) {
     options.push({ value: "other", label: "Inne" });
@@ -309,9 +534,40 @@ function renderMonitorTypeOptions() {
   const current = $("#monitorTypeSelect").value;
   $("#monitorTypeSelect").innerHTML = options;
   if (current) $("#monitorTypeSelect").value = current;
+  renderMonitorTypeCards();
   const historyCurrent = $("#historyType").value;
   $("#historyType").innerHTML = '<option value="">Wszystkie</option>' + options;
   $("#historyType").value = historyCurrent;
+}
+
+function renderMonitorTypeCards() {
+  const root = $("#monitorTypeCards");
+  if (!root) return;
+  const selected = $("#monitorTypeSelect").value || state.monitorTypes[0]?.type || "ping_host";
+  root.innerHTML = state.monitorTypes.map((type) => `
+    <button class="type-card ${type.type === selected ? "active" : ""}" type="button" data-monitor-type="${type.type}">
+      <span>${typeIcon(type.type)} ${escapeHtml(type.label)}</span>
+      <small>${escapeHtml(type.category || "monitor")} · domyślnie ${type.default_interval || "-"}s</small>
+    </button>
+  `).join("");
+  $$("[data-monitor-type]", root).forEach((button) => {
+    button.addEventListener("click", () => {
+      $("#monitorTypeSelect").value = button.dataset.monitorType;
+      renderTypeFields(button.dataset.monitorType);
+    });
+  });
+}
+
+function typeIcon(type) {
+  if (type === "ping_host") return "◉";
+  if (type === "tcp_port") return "↔";
+  if (type === "dns_lookup") return "DNS";
+  if (type === "ssl_certificate") return "SSL";
+  if (type === "rest_api") return "{}";
+  if (type === "ha_entity") return "HA";
+  if (type === "mqtt_monitor") return "MQ";
+  if (type === "http_hash") return "WWW";
+  return "•";
 }
 
 function renderDetailMonitorOptions() {
@@ -372,6 +628,16 @@ function renderMonitorGroupFilterOptions() {
     .join("");
   select.value = Array.from(select.options).some((option) => option.value === current) ? current : "all";
   state.monitorGroupFilter = select.value;
+  const historyGroup = $("#historyGroup");
+  if (historyGroup) {
+    const currentHistoryGroup = historyGroup.value;
+    historyGroup.innerHTML = '<option value="">Wszystkie</option><option value="none">Bez grupy</option>' + state.groups
+      .map((group) => `<option value="${group.id}">${escapeHtml(group.name)}</option>`)
+      .join("");
+    historyGroup.value = Array.from(historyGroup.options).some((option) => option.value === currentHistoryGroup)
+      ? currentHistoryGroup
+      : "";
+  }
 }
 
 function renderSlo(slo) {
@@ -418,6 +684,8 @@ function renderTypeFields(type) {
   if (type === "rest_api") $("#restOptions").classList.remove("hidden");
   if (type === "ha_entity") $("#haEntityOptions").classList.remove("hidden");
   if (type === "mqtt_monitor") $("#mqttOptions").classList.remove("hidden");
+  renderMonitorTypeCards();
+  updateConfigPreview();
 }
 
 function buildMonitorConfig(form, type) {
@@ -464,6 +732,16 @@ function filterMonitorsForList(monitors) {
     .filter((monitor) => monitorMatchesStatus(monitor, state.monitorStatusFilter))
     .filter((monitor) => monitorMatchesGroup(monitor, state.monitorGroupFilter))
     .filter((monitor) => {
+      if (state.monitorMaintenanceFilter === "active") return Boolean(monitor.maintenance_active);
+      if (state.monitorMaintenanceFilter === "inactive") return !monitor.maintenance_active;
+      return true;
+    })
+    .filter((monitor) => {
+      if (state.monitorEnabledFilter === "enabled") return monitor.enabled;
+      if (state.monitorEnabledFilter === "disabled") return !monitor.enabled;
+      return true;
+    })
+    .filter((monitor) => {
       if (!state.monitorQuery) return true;
       const config = monitor.config || {};
       const haystack = [
@@ -471,6 +749,7 @@ function filterMonitorsForList(monitors) {
         monitor.target,
         monitor.status,
         monitor.group_name,
+        monitor.type,
         typeLabel(monitor.type),
         config.host,
         config.topic,
@@ -505,7 +784,9 @@ function sortMonitors(monitors, sortKey) {
   sorted.sort((a, b) => {
     if (sortKey === "status") return text(a.status).localeCompare(text(b.status)) || text(a.name).localeCompare(text(b.name));
     if (sortKey === "response") return numeric(a.last_response_ms) - numeric(b.last_response_ms);
+    if (sortKey === "uptime") return text(a.status).localeCompare(text(b.status)) || text(a.name).localeCompare(text(b.name));
     if (sortKey === "last_checked") return checkedAt(b) - checkedAt(a);
+    if (sortKey === "type") return text(typeLabel(a.type)).localeCompare(text(typeLabel(b.type))) || text(a.name).localeCompare(text(b.name));
     if (sortKey === "http") return numeric(a.last_http_status) - numeric(b.last_http_status);
     if (sortKey === "group") return text(a.group_name).localeCompare(text(b.group_name)) || text(a.name).localeCompare(text(b.name));
     return text(a.name).localeCompare(text(b.name));
@@ -541,6 +822,32 @@ function targetHtml(monitor) {
   return `<span class="target-text" title="${escapeHtml(value)}">${escapeHtml(value)}</span>`;
 }
 
+function renderMonitorTableModern(monitors) {
+  const body = $("#monitorTableRows");
+  if (!monitors.length) {
+    body.innerHTML = '<tr><td colspan="11" class="empty">Brak monitorów dla wybranych filtrów.</td></tr>';
+    return;
+  }
+  body.innerHTML = monitors.map((monitor) => `
+    <tr class="clickable-row" data-card-id="${monitor.id}" tabindex="0" title="Otwórz szczegóły monitoringu">
+      <td><input class="monitor-select" type="checkbox" data-select-monitor="${monitor.id}" ${state.selectedMonitorIds.has(monitor.id) ? "checked" : ""} aria-label="Zaznacz ${escapeHtml(monitor.name)}" /></td>
+      <td><span class="badge ${monitor.enabled ? badgeClass(monitor.status) : "unknown"}">${monitor.enabled ? escapeHtml(monitor.status) : "wyłączony"}</span></td>
+      <td>${escapeHtml(typeLabel(monitor.type))}</td>
+      <td><strong>${escapeHtml(monitor.name)}</strong></td>
+      <td>${targetHtml(monitor)}</td>
+      <td>${monitor.last_http_status || "-"}</td>
+      <td>${formatResponse(monitor.last_response_ms)}</td>
+      <td>${monitor.interval_seconds}s</td>
+      <td>${escapeHtml(monitor.group_name || "Bez grupy")}</td>
+      <td>${formatDate(monitor.last_checked_at)}</td>
+      <td><div class="actions compact-actions">${renderInlineMonitorActions(monitor)}</div></td>
+    </tr>
+  `).join("");
+  bindMonitorOpeners(body);
+  bindMonitorSelection(body);
+  bindMonitorActions(body);
+}
+
 function diagnosticMessage(monitor) {
   const error = String(monitor.last_error || "");
   if (monitor.last_http_status === 403 || error.includes("403")) {
@@ -557,10 +864,7 @@ function filterMonitorsByCategory(monitors, category) {
 }
 
 function monitorCategory(monitor) {
-  if (WEBSITE_MONITOR_TYPES.includes(monitor.type)) return "websites";
-  if (DEVICE_MONITOR_TYPES.includes(monitor.type)) return "devices";
-  if (HA_MONITOR_TYPES.includes(monitor.type)) return "ha";
-  return "other";
+  return MONITOR_TYPE_CATEGORIES[monitor.type] || "other";
 }
 
 function normalizeUrlKey(target) {
@@ -600,11 +904,52 @@ function renderCards(selector, monitors, options = {}) {
   }
 }
 
+function renderMonitorCardsModern(selector, monitors) {
+  const root = $(selector);
+  if (!monitors.length) {
+    root.innerHTML = '<p class="empty">Brak monitorów w tej sekcji.</p>';
+    return;
+  }
+  root.innerHTML = monitors.map((monitor) => `
+    <article class="card clickable-card ${monitor.enabled ? "" : "inactive"}" data-card-id="${monitor.id}" tabindex="0">
+      <div class="card-head">
+        <div class="card-title-row">
+          <input class="monitor-select" type="checkbox" data-select-monitor="${monitor.id}" ${state.selectedMonitorIds.has(monitor.id) ? "checked" : ""} aria-label="Zaznacz ${escapeHtml(monitor.name)}" />
+          <div>
+            <h3>${escapeHtml(monitor.name)}</h3>
+            <p>${targetHtml(monitor)}</p>
+          </div>
+        </div>
+        <span class="badge ${monitor.enabled ? badgeClass(monitor.status) : "unknown"}">${monitor.enabled ? escapeHtml(monitor.status) : "disabled"}</span>
+      </div>
+      <div class="meta">${renderMonitorMeta(monitor)}</div>
+      <div class="actions">${renderInlineMonitorActions(monitor)}${renderCardActions(monitor)}</div>
+    </article>
+  `).join("");
+  bindMonitorOpeners(root);
+  bindMonitorSelection(root);
+  bindMonitorActions(root);
+}
+
+function renderInlineMonitorActions(monitor) {
+  return `
+    <button data-action="check" data-id="${monitor.id}" type="button" aria-label="Sprawdź ${escapeHtml(monitor.name)}">↻</button>
+    <button data-action="edit" data-id="${monitor.id}" type="button">Edytuj</button>
+    <button data-action="duplicate" data-id="${monitor.id}" type="button">Duplikuj</button>
+  `;
+}
+
 function bindMonitorOpeners(root) {
   $$("[data-card-id]", root).forEach((node) => {
-    node.addEventListener("click", () => showMonitorDetails(Number(node.dataset.cardId)));
+    node.addEventListener("click", (event) => {
+      const interactive = event.target.closest("button, input, select, summary, details, a");
+      if (interactive && interactive !== node) return;
+      showMonitorDetails(Number(node.dataset.cardId));
+    });
     node.addEventListener("keydown", (event) => {
       if (!["Enter", " "].includes(event.key)) return;
+      const interactive = event.target.closest("button, input, select, summary, details, a");
+      if (interactive && interactive !== node) return;
       event.preventDefault();
       showMonitorDetails(Number(node.dataset.cardId));
     });
@@ -621,7 +966,7 @@ function renderMonitorMeta(monitor) {
     ["Serwis", monitor.maintenance_active ? `aktywny do ${formatDate(monitor.maintenance_until || monitor.group_maintenance_until)}` : "-"],
     ["Ostatni test", formatDate(monitor.last_checked_at)],
   ];
-  if (monitorCategory(monitor) === "websites") {
+  if (monitorCategory(monitor) === "website") {
     rows.splice(1, 0,
       ["URL", monitor.target],
       ["HTTP status", monitor.last_http_status || "-"],
@@ -631,7 +976,7 @@ function renderMonitorMeta(monitor) {
     if (monitor.type === "http_hash") rows.push(["Suma WWW", hashHtml(monitor.last_content_hash)]);
     rows.push(["Ostatni błąd", monitor.last_error || "-"]);
     if (diagnosticMessage(monitor)) rows.push(["Diagnostyka", diagnosticMessage(monitor)]);
-  } else if (monitorCategory(monitor) === "devices") {
+  } else if (["network", "protocol"].includes(monitorCategory(monitor))) {
     rows.splice(1, 0,
       ["IP / host", config.host || monitor.target],
       ["Ping / odpowiedź", monitor.last_response_ms ? `${Number(monitor.last_response_ms).toFixed(1)} ms` : "-"],
@@ -641,7 +986,7 @@ function renderMonitorMeta(monitor) {
     if (config.topic) rows.push(["Topic", config.topic]);
     rows.push(["Ostatni błąd", monitor.last_error || "-"]);
     if (diagnosticMessage(monitor)) rows.push(["Diagnostyka", diagnosticMessage(monitor)]);
-  } else if (monitorCategory(monitor) === "ha") {
+  } else if (monitorCategory(monitor) === "home_assistant") {
     rows.splice(1, 0,
       ["Entity ID", monitor.target],
       ["Stan HA", config.last_ha_state || "-"],
@@ -681,6 +1026,72 @@ function renderCardActions(monitor) {
   `;
 }
 
+function bindMonitorActions(root) {
+  $$("[data-action]", root).forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      handleCardAction(event);
+    });
+  });
+}
+
+function bindMonitorSelection(root) {
+  $$("[data-select-monitor]", root).forEach((checkbox) => {
+    checkbox.addEventListener("click", (event) => event.stopPropagation());
+    checkbox.addEventListener("change", (event) => {
+      const id = Number(event.currentTarget.dataset.selectMonitor);
+      if (event.currentTarget.checked) state.selectedMonitorIds.add(id);
+      else state.selectedMonitorIds.delete(id);
+      renderBulkState(filterMonitorsForList(state.monitors));
+    });
+  });
+}
+
+function renderBulkState(visibleMonitors = filterMonitorsForList(state.monitors)) {
+  const visibleIds = visibleMonitors.map((monitor) => monitor.id);
+  const selectedVisible = visibleIds.filter((id) => state.selectedMonitorIds.has(id));
+  if ($("#bulkSelectionCount")) $("#bulkSelectionCount").textContent = `${state.selectedMonitorIds.size} zaznaczonych`;
+  if ($("#selectAllMonitors")) {
+    $("#selectAllMonitors").checked = visibleIds.length > 0 && selectedVisible.length === visibleIds.length;
+    $("#selectAllMonitors").indeterminate = selectedVisible.length > 0 && selectedVisible.length < visibleIds.length;
+  }
+}
+
+function toggleVisibleMonitorSelection(event) {
+  const visible = filterMonitorsForList(state.monitors);
+  visible.forEach((monitor) => {
+    if (event.currentTarget.checked) state.selectedMonitorIds.add(monitor.id);
+    else state.selectedMonitorIds.delete(monitor.id);
+  });
+  renderMonitorLists();
+}
+
+async function handleBulkAction(event) {
+  const action = event.currentTarget.dataset.bulkAction;
+  const ids = [...state.selectedMonitorIds];
+  if (!ids.length) {
+    toast("Zaznacz przynajmniej jeden monitor.", "error");
+    return;
+  }
+  if (action === "delete" && !confirm(`Usunąć ${ids.length} monitorów?`)) return;
+  await runWithButtonLoading(event.currentTarget, async () => {
+    for (const id of ids) {
+      const monitor = state.monitors.find((item) => item.id === id);
+      if (!monitor) continue;
+      if (action === "enable") await api(`/api/monitors/${id}/enable`, { method: "POST" });
+      if (action === "disable") await api(`/api/monitors/${id}/disable`, { method: "POST" });
+      if (action === "check") await api(`/api/monitors/${id}/check`, { method: "POST" });
+      if (action === "maint-30") await api(`/api/monitors/${id}/maintenance`, { method: "POST", body: JSON.stringify({ duration_minutes: 30, reason: "Tryb serwisowy 30 min" }) });
+      if (action === "maint-120") await api(`/api/monitors/${id}/maintenance`, { method: "POST", body: JSON.stringify({ duration_minutes: 120, reason: "Tryb serwisowy 2h" }) });
+      if (action === "delete") await api(`/api/monitors/${id}`, { method: "DELETE" });
+    }
+  });
+  state.selectedMonitorIds.clear();
+  toast("Wykonano akcję masową.");
+  refreshAll();
+}
+
 async function handleCardAction(event) {
   const id = Number(event.currentTarget.dataset.id);
   const action = event.currentTarget.dataset.action;
@@ -695,6 +1106,13 @@ async function handleCardAction(event) {
     refreshAll();
   }
   if (action === "edit") openMonitorForm(monitor);
+  if (action === "duplicate") {
+    const clone = JSON.parse(JSON.stringify(monitor));
+    delete clone.id;
+    clone.name = `${clone.name} kopia`;
+    clone.test_on_save = false;
+    openMonitorForm(clone);
+  }
   if (action === "maintenance") openMaintenanceDialog(monitor);
   if (action === "maint-30") await setMonitorMaintenance(id, 30);
   if (action === "maint-120") await setMonitorMaintenance(id, 120);
@@ -706,13 +1124,13 @@ async function handleCardAction(event) {
     await refreshAll();
     if ($("#monitorDetail").classList.contains("active") && state.selectedMonitorId === id) {
       state.selectedMonitorId = null;
-      showView("devices");
+      showView("monitoring");
     }
   }
   if (action === "snapshots") showSnapshots(id);
 }
 
-async function startMonitorTestRun(id, returnView = "devices") {
+async function startMonitorTestRun(id, returnView = "monitoring") {
   const monitor = state.monitors.find((item) => item.id === id);
   if (!monitor) return;
   state.currentTest = {
@@ -755,18 +1173,18 @@ async function startMonitorTestRun(id, returnView = "devices") {
 function backFromMonitorTest() {
   const test = state.currentTest;
   if (!test) {
-    showView("devices");
+    showView("monitoring");
     return;
   }
   if (test.returnView === "monitorDetail" && test.monitorId) {
     showMonitorDetails(test.monitorId);
     return;
   }
-  showView(test.returnView || test.returnTab || "devices");
+  showView(test.returnView || test.returnTab || "monitoring");
 }
 
 function monitorReturnView(monitor) {
-  return "devices";
+  return "monitoring";
 }
 
 function startTestRunTimer() {
@@ -895,20 +1313,32 @@ function formatDuration(ms) {
   return `${minutes}:${String(seconds).padStart(2, "0")}`;
 }
 
+function formatSeconds(value) {
+  const total = Math.max(0, Math.floor(Number(value) || 0));
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const seconds = total % 60;
+  if (hours) return `${hours}h ${minutes}m`;
+  if (minutes) return `${minutes}m ${seconds}s`;
+  return `${seconds}s`;
+}
+
 async function showMonitorDetails(id) {
   state.selectedMonitorId = id;
-  showView("monitorDetail", "devices");
+  showView("monitorDetail", "monitoring");
   renderMonitorDetailsShell(id);
   const monitor = state.monitors.find((item) => item.id === id);
   if (!monitor) return;
-  const [slo, history, snapshots] = await Promise.all([
+  const [slo, history, snapshots, timeline] = await Promise.all([
     api(`/api/slo?monitor_id=${id}`),
     api(`/api/history?monitor_id=${id}&limit=80`),
     monitor.type === "http_hash" ? api(`/api/monitors/${id}/snapshots`) : Promise.resolve([]),
+    api(`/api/monitors/${id}/timeline?limit=120`),
   ]);
   renderDetailSlo(slo);
   renderDetailHistory(history);
   renderDetailSnapshots(snapshots);
+  renderDetailTimeline(timeline);
 }
 
 function renderMonitorDetailsShell(id) {
@@ -920,6 +1350,10 @@ function renderMonitorDetailsShell(id) {
   }
   $("#detailTitle").textContent = monitor.name;
   $("#detailSubtitle").textContent = `${typeLabel(monitor.type)} · ${monitor.target}`;
+  if ($("#detailTimeline")) {
+    $("#detailTimeline").className = "timeline empty";
+    $("#detailTimeline").innerHTML = "Ladowanie...";
+  }
   $("#detailMonitorSearch").value = detailMonitorValue(monitor);
   $("#detailExtraActions").innerHTML = renderCardActions(monitor);
   $$("[data-action]", $("#detailExtraActions")).forEach((button) => button.addEventListener("click", handleCardAction));
@@ -1007,6 +1441,16 @@ function renderDetailSnapshots(snapshots) {
   `).join("");
 }
 
+function renderDetailTimeline(items) {
+  renderList("#detailTimeline", items || [], (item) => `
+    <div class="list-item">
+      <strong>${escapeHtml(item.title || item.type || "Zdarzenie")}</strong>
+      <small>${formatDate(item.timestamp)}${item.status ? ` · ${escapeHtml(item.status)}` : ""}</small>
+      ${item.description ? `<span>${escapeHtml(item.description)}</span>` : ""}
+    </div>
+  `);
+}
+
 function parseDetails(value) {
   try {
     return value ? JSON.parse(value) : {};
@@ -1038,6 +1482,7 @@ function renderGroups() {
       </div>
       <div class="slo-mini">${renderSloMini(group.slo || {})}</div>
       <div class="actions">
+        <button data-group-action="filter" data-id="${group.id}">Pokaż monitory</button>
         <button data-group-action="edit" data-id="${group.id}">Edytuj</button>
         <button data-group-action="maint-30" data-id="${group.id}">Serwis 30m</button>
         <button data-group-action="maint-120" data-id="${group.id}">Serwis 2h</button>
@@ -1048,6 +1493,7 @@ function renderGroups() {
     </article>
   `).join("");
   $$("[data-group-action]", root).forEach((button) => button.addEventListener("click", handleGroupAction));
+  renderGroupMonitorList();
 }
 
 function renderSloMini(slo) {
@@ -1120,6 +1566,13 @@ async function saveMaintenanceFromDialog(event) {
     toast("Podaj datę zakończenia serwisu.", "error");
     return;
   }
+  if (action === "filter") {
+    state.monitorGroupFilter = String(id);
+    if ($("#monitorGroupFilter")) $("#monitorGroupFilter").value = String(id);
+    renderGroupMonitorList(id);
+    showView("monitoring");
+    renderMonitorLists();
+  }
   const until = new Date(untilValue);
   if (Number.isNaN(until.getTime())) {
     toast("Nieprawidłowa data zakończenia serwisu.", "error");
@@ -1131,6 +1584,27 @@ async function saveMaintenanceFromDialog(event) {
   }
   await setMonitorMaintenanceUntil(id, until.toISOString(), form.elements.reason.value.trim());
   $("#maintenanceDialog").close();
+}
+
+function renderGroupMonitorList(groupId = Number(state.monitorGroupFilter) || null) {
+  const root = $("#groupMonitorList");
+  if (!root) return;
+  if (!groupId) {
+    root.classList.add("empty");
+    root.innerHTML = "Wybierz grupę kartą lub filtrem.";
+    return;
+  }
+  const monitors = state.monitors.filter((monitor) => Number(monitor.group_id) === Number(groupId));
+  root.classList.toggle("empty", !monitors.length);
+  root.innerHTML = monitors.length
+    ? monitors.map((monitor) => `
+      <button class="list-item clickable-monitor" data-card-id="${monitor.id}" type="button">
+        <strong>${escapeHtml(monitor.name)}</strong>
+        <small>${escapeHtml(typeLabel(monitor.type))} · ${escapeHtml(monitor.status)} · ${formatResponse(monitor.last_response_ms)}</small>
+      </button>
+    `).join("")
+    : "Brak monitorów w tej grupie.";
+  bindMonitorOpeners(root);
 }
 
 async function applyMaintenanceDuration(minutes) {
@@ -1229,6 +1703,7 @@ function openMonitorForm(monitor) {
   renderTestResult(null);
   $("#dialogTitle").textContent = monitor.id ? "Edytuj monitor" : "Dodaj monitor";
   renderTypeFields(form.elements.type.value);
+  updateConfigPreview();
   $("#monitorDialog").showModal();
 }
 
@@ -1275,6 +1750,17 @@ function buildMonitorPayload(form) {
     test_on_save: form.elements.test_on_save.checked,
     config,
   };
+}
+
+function updateConfigPreview() {
+  const preview = $("#configPreview");
+  const form = $("#monitorForm");
+  if (!preview || !form) return;
+  try {
+    preview.textContent = JSON.stringify(buildMonitorPayload(form), null, 2);
+  } catch (_) {
+    preview.textContent = "{}";
+  }
 }
 
 async function testMonitorFromForm(event) {
@@ -1362,21 +1848,62 @@ async function loadHistory() {
     ["status", $("#historyStatus").value.trim()],
     ["from_date", toIso($("#historyFrom").value)],
     ["to_date", toIso($("#historyTo").value)],
+    ["limit", $("#historyLimit")?.value || "250"],
   ];
   mapping.forEach(([key, value]) => value && params.set(key, value));
-  const rows = await api(`/api/history?${params.toString()}`);
-  $("#historyRows").innerHTML = rows.map((row) => `
-    <tr>
+  let rows = await api(`/api/history?${params.toString()}`);
+  const groupFilter = $("#historyGroup")?.value || "";
+  if (groupFilter) {
+    rows = rows.filter((row) => {
+      const monitor = state.monitors.find((item) => item.id === row.monitor_id);
+      if (groupFilter === "none") return !monitor?.group_id;
+      return String(monitor?.group_id || "") === String(groupFilter);
+    });
+  }
+  $("#historyRows").innerHTML = rows.length ? rows.map((row, index) => `
+    <tr class="${isErrorStatus(row.status) ? "history-error" : ""}" data-history-index="${index}">
       <td>${formatDate(row.checked_at)}</td>
       <td>${escapeHtml(row.monitor_name)}<br><small>${escapeHtml(row.target)}</small></td>
       <td><span class="badge ${badgeClass(row.status)}">${escapeHtml(row.status)}</span></td>
-      <td>${row.response_ms ? Number(row.response_ms).toFixed(1) + " ms" : "-"}</td>
+      <td>${formatResponse(row.response_ms)}</td>
       <td>${row.http_status || "-"}</td>
       <td>${hashHtml(row.content_hash)}</td>
       <td>${row.packet_loss ?? "-"}</td>
       <td>${escapeHtml(row.error || "-")}</td>
     </tr>
-  `).join("");
+  `).join("") : '<tr><td colspan="8" class="empty">Brak wpisów historii dla wybranych filtrów.</td></tr>';
+  $$("[data-history-index]").forEach((row) => {
+    row.addEventListener("click", () => openHistoryDetails(rows[Number(row.dataset.historyIndex)]));
+  });
+}
+
+function applyHistoryRange(event) {
+  const value = event.currentTarget.dataset.historyRange;
+  const now = new Date();
+  const from = new Date(now);
+  if (value === "1h") from.setHours(now.getHours() - 1);
+  if (value === "24h") from.setDate(now.getDate() - 1);
+  if (value === "7d") from.setDate(now.getDate() - 7);
+  if (value === "30d") from.setDate(now.getDate() - 30);
+  $("#historyFrom").value = toDatetimeLocalValue(from.toISOString());
+  $("#historyTo").value = toDatetimeLocalValue(now.toISOString());
+  loadHistory();
+}
+
+function openHistoryDetails(row) {
+  const node = $("#historyDetailData");
+  node.innerHTML = definitionRows({
+    Monitor: row.monitor_name,
+    Target: row.target,
+    Status: row.status,
+    Data: formatDate(row.checked_at),
+    "Czas odpowiedzi": formatResponse(row.response_ms),
+    HTTP: row.http_status || "-",
+    "Suma WWW": row.content_hash || "-",
+    Błąd: row.error || "-",
+    Szczegóły: row.details_json || "{}",
+  });
+  $("#historyDialog").showModal();
 }
 
 function renderSettings() {
@@ -1405,6 +1932,10 @@ async function saveSettings(event) {
     retention_days: Number(form.elements.retention_days.value),
     default_interval_seconds: Number(form.elements.default_interval_seconds.value),
     default_timeout_minutes: Number(form.elements.default_timeout_minutes.value),
+    max_concurrent_checks: Number(form.elements.max_concurrent_checks.value),
+    failure_threshold: Number(form.elements.failure_threshold.value),
+    recovery_threshold: Number(form.elements.recovery_threshold.value),
+    retry_delay_seconds: Number(form.elements.retry_delay_seconds.value),
     max_page_size_mb: Number(form.elements.max_page_size_mb.value),
     block_private_networks: form.elements.block_private_networks.checked,
     publish_home_assistant_entities: form.elements.publish_home_assistant_entities.checked,
@@ -1464,6 +1995,10 @@ function normalizeImportedSettings(settings) {
   if (normalized.max_page_size_mb === undefined && normalized.max_page_size_kb !== undefined) {
     normalized.max_page_size_mb = Number(normalized.max_page_size_kb) / 1024;
   }
+  normalized.max_concurrent_checks ??= state.settings?.max_concurrent_checks ?? 15;
+  normalized.failure_threshold ??= state.settings?.failure_threshold ?? 3;
+  normalized.recovery_threshold ??= state.settings?.recovery_threshold ?? 2;
+  normalized.retry_delay_seconds ??= state.settings?.retry_delay_seconds ?? 10;
   delete normalized.request_timeout_seconds;
   delete normalized.ping_timeout_seconds;
   delete normalized.default_device_interval;
@@ -1502,8 +2037,46 @@ async function loadDiagnostics() {
   $("#logsBox").textContent = logs || "Brak logów.";
 }
 
+async function loadDiagnosticsModern() {
+  const [diagnostics, logs] = await Promise.all([
+    api("/api/diagnostics"),
+    api("/api/logs"),
+  ]);
+  state.diagnostics = diagnostics;
+  renderSchedulerStatus();
+  $("#diagnosticsData").innerHTML = definitionRows({
+    Wersja: diagnostics.version,
+    "Status bazy": diagnostics.database_exists ? "OK" : "Brak",
+    "Ścieżka bazy": diagnostics.database_path,
+    "Rozmiar bazy": `${diagnostics.database_size_bytes} B`,
+    "Rozmiar WAL": `${diagnostics.wal_size_bytes} B`,
+    "Liczba monitorów": diagnostics.monitor_count,
+    "Wpisy historii": diagnostics.check_count,
+    "Ostatni test": formatDate(diagnostics.last_check),
+    "Ostatni tick schedulera": formatDate(diagnostics.scheduler_last_tick),
+    "Aktywne zadania": diagnostics.active_jobs?.join(", ") || "-",
+    "Oczekujące zadania": diagnostics.queued_jobs?.join(", ") || "-",
+    "Limit równoległości": diagnostics.max_concurrent_checks,
+    "Błędy schedulera": diagnostics.scheduler_error_count ?? 0,
+    "Ostatni błąd schedulera": diagnostics.scheduler_last_error || "-",
+    "Encje HA": diagnostics.settings?.publish_home_assistant_entities ? "włączone" : "wyłączone",
+    "Eventy HA": diagnostics.settings?.publish_home_assistant_events ? "włączone" : "wyłączone",
+    "Plik logu": diagnostics.log_file,
+  });
+  renderList("#diagnosticsErrors", diagnostics.errors || [], (row) => `
+    <div class="list-item">
+      <strong>${escapeHtml(row.error || "Błąd")}</strong>
+      <small>${formatDate(row.checked_at)} · monitor ${row.monitor_id || "-"}</small>
+    </div>
+  `);
+  $("#logsBox").textContent = logs || "Brak logów.";
+}
+
+loadDiagnostics = loadDiagnosticsModern;
+
 function renderList(selector, items, renderer) {
   const root = $(selector);
+  if (!root) return;
   if (!items.length) {
     root.classList.add("empty");
     root.innerHTML = "Brak danych";
@@ -1511,6 +2084,80 @@ function renderList(selector, items, renderer) {
   }
   root.classList.remove("empty");
   root.innerHTML = items.map(renderer).join("");
+}
+
+async function loadIncidents() {
+  state.incidents = await api("/api/incidents?limit=100");
+  renderIncidents();
+  renderDashboard();
+}
+
+function renderIncidentMonitorOptions() {
+  const select = $("#incidentMonitorFilter");
+  if (!select) return;
+  const current = state.incidentMonitorFilter;
+  select.innerHTML = [
+    '<option value="">Wszystkie</option>',
+    ...state.monitors.map((monitor) => `<option value="${monitor.id}">${escapeHtml(monitor.name)}</option>`),
+  ].join("");
+  select.value = state.monitors.some((monitor) => String(monitor.id) === String(current)) ? current : "";
+  state.incidentMonitorFilter = select.value;
+}
+
+function renderIncidents() {
+  if ($("#incidentStatusFilter")) $("#incidentStatusFilter").value = state.incidentStatusFilter;
+  if ($("#incidentMonitorFilter")) $("#incidentMonitorFilter").value = state.incidentMonitorFilter;
+  const monitorId = state.incidentMonitorFilter ? Number(state.incidentMonitorFilter) : null;
+  const incidents = (state.incidents || []).filter((incident) => {
+    if (state.incidentStatusFilter !== "all" && incident.status !== state.incidentStatusFilter) return false;
+    if (monitorId && Number(incident.monitor_id) !== monitorId) return false;
+    return true;
+  });
+  renderIncidentList("#incidentsList", incidents);
+}
+
+async function loadEvents() {
+  state.events = await api("/api/events");
+  renderEvents();
+}
+
+function renderEvents() {
+  const query = state.eventQuery;
+  const events = (state.events || []).filter((event) => {
+    if (state.eventTypeFilter && event.event_type !== state.eventTypeFilter) return false;
+    if (!query) return true;
+    const payload = event.payload || {};
+    return [
+      event.event_type,
+      payload.monitor_name,
+      payload.target,
+      payload.previous_state,
+      payload.new_state,
+      JSON.stringify(payload.details || {}),
+    ].filter(Boolean).join(" ").toLowerCase().includes(query);
+  });
+  renderList("#eventsList", events, (event) => {
+    const payload = event.payload || {};
+    return `
+      <article class="event-item">
+        <span class="event-icon" aria-hidden="true">${eventIcon(event.event_type)}</span>
+        <div>
+          <strong>${escapeHtml(event.event_type)}</strong>
+          <p>${escapeHtml(payload.monitor_name || "System")} ${payload.target ? "· " + escapeHtml(payload.target) : ""}</p>
+          <small>${escapeHtml(payload.previous_state || "-")} → ${escapeHtml(payload.new_state || "-")}</small>
+        </div>
+        <small>${formatDate(event.created_at)} · HA: ${event.delivered_to_ha ? "tak" : "nie"}</small>
+      </article>
+    `;
+  });
+}
+
+function eventIcon(type) {
+  if (String(type).includes("offline") || String(type).includes("error")) return "!";
+  if (String(type).includes("online")) return "✓";
+  if (String(type).includes("changed")) return "↕";
+  if (String(type).includes("ssl")) return "SSL";
+  return "•";
 }
 
 function renderRecentChanges(items) {
@@ -1623,6 +2270,30 @@ function isErrorStatus(status) {
 
 function average(values) {
   return values.reduce((sum, value) => sum + Number(value), 0) / values.length;
+}
+
+function formatResponse(value) {
+  return value ? `${Number(value).toFixed(1)} ms` : "-";
+}
+
+function debounce(fn, delay = 200) {
+  let timer;
+  return (...args) => {
+    clearTimeout(timer);
+    timer = setTimeout(() => fn(...args), delay);
+  };
+}
+
+async function runWithButtonLoading(button, fn) {
+  const previous = button.textContent;
+  button.disabled = true;
+  button.textContent = "Pracuję...";
+  try {
+    return await fn();
+  } finally {
+    button.disabled = false;
+    button.textContent = previous;
+  }
 }
 
 function startOfLocalDay(value) {

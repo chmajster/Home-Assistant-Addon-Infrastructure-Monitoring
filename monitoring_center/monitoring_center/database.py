@@ -89,6 +89,7 @@ class Database:
             "check_count": count("monitor_checks"),
             "event_count": count("events"),
             "snapshot_count": count("website_snapshots"),
+            "incident_count": count("incidents"),
             "oldest_check": checks_range.get("oldest_check") if checks_range else None,
             "newest_check": checks_range.get("newest_check") if checks_range else None,
         }

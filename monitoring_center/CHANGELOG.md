@@ -2,17 +2,31 @@
 
 All notable changes to the **Monitoring Center** Home Assistant add-on are documented here.
 
-## [0.5.6] - 2026-06-30
+## [0.7.0] - 2026-07-01
+
+### Added
+
+- Added incidents as first-class database, API and UI records with duration, status, root cause and check count.
+- Added scheduler loop status directly on the dashboard: running state, last tick, active checks, queue and scheduler errors.
+- Added a monitor timeline for lifecycle events, status transitions, WWW changes, page limit stops and incidents.
 
 ### Changed
 
+- Scheduler now tracks check tasks, removes completed tasks, cancels tasks on stop and logs task exceptions.
+- Bumped add-on and application metadata version to `0.7.0`.
+
+## [0.6.0] - 2026-07-01
+
+### Changed
+
+- Rebuilt the web UI as a responsive admin panel with sidebar/mobile navigation, richer dashboard, events view, bulk monitor actions, type-card monitor form, JSON preview and expanded diagnostics/settings.
 - Monitor timeout now uses the global Settings value as the default while still honoring per-monitor `timeout_minutes` or `timeout_seconds` in monitor config.
 - Added global `default_interval_seconds` setting as the default interval for new monitors.
 - Added `SCHEMA_VERSION = 7` migration to fold legacy interval settings into `default_interval_seconds`.
 - Added `SCHEMA_VERSION = 8` migration for runtime failure/recovery counters used by flapping protection.
 - Added scheduler concurrency limiting, scheduler diagnostics, failure/recovery thresholds and retry delay settings.
 - Added basic pytest coverage for timeout config, migrations, thresholds and concurrency, plus GitHub Actions CI.
-- Bumped add-on and application metadata version to `0.5.6`.
+- Bumped add-on and application metadata version to `0.6.0`.
 
 ## [0.5.5] - 2026-06-30
 

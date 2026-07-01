@@ -4,362 +4,542 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Monitoring Center</title>
-    <link rel="stylesheet" href="static/styles.css?v=0.5.6" />
+    <link rel="stylesheet" href="static/styles.css?v=0.7.0" />
   </head>
   <body>
-    <header class="topbar">
-      <div>
-        <h1>Monitoring Center</h1>
-        <p>Lokalny monitoring urządzeń, stron WWW, historii i zdarzeń Home Assistant.</p>
-      </div>
-      <div class="topbar-actions">
-        <span id="lastRefreshAt">Odświeżono: -</span>
-        <button data-open-form="ping_host" class="primary">Dodaj monitor</button>
-        <button id="refreshBtn">Odśwież</button>
-        <button id="themeBtn" type="button" aria-label="Przełącz motyw">Motyw: jasny</button>
-      </div>
-    </header>
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="Nawigacja główna">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true">MC</span>
+          <div>
+            <strong>Monitoring Center</strong>
+            <small>Home Assistant add-on</small>
+          </div>
+        </div>
+        <nav class="side-nav">
+          <button class="tab active" data-tab="dashboard"><span aria-hidden="true">⌂</span>Dashboard</button>
+          <button class="tab" data-tab="monitoring"><span aria-hidden="true">◉</span>Monitoring</button>
+          <button class="tab" data-tab="groups"><span aria-hidden="true">◆</span>Grupy</button>
+          <button class="tab" data-tab="incidents"><span aria-hidden="true">!</span>Incydenty</button>
+          <button class="tab" data-tab="history"><span aria-hidden="true">◷</span>Historia</button>
+          <button class="tab" data-tab="events"><span aria-hidden="true">✦</span>Zdarzenia</button>
+          <button class="tab" data-tab="settings"><span aria-hidden="true">⚙</span>Ustawienia</button>
+          <button class="tab" data-tab="diagnostics"><span aria-hidden="true">☑</span>Diagnostyka</button>
+        </nav>
+        <div class="sidebar-foot">
+          <small id="sidebarSystemStatus">System: sprawdzanie</small>
+          <small id="sidebarCounts">0 monitorów</small>
+        </div>
+      </aside>
 
-    <nav class="tabs" aria-label="Sekcje">
-      <div class="tab-list">
-        <button class="tab active" data-tab="dashboard">Dashboard</button>
-        <button class="tab" data-tab="devices">Monitoring</button>
-        <button class="tab" data-tab="groups">Grupy</button>
-        <button class="tab" data-tab="history">Historia</button>
-        <button class="tab" data-tab="settings">Ustawienia</button>
-        <button class="tab" data-tab="diagnostics">Diagnostyka</button>
+      <div class="workspace">
+        <header class="topbar">
+          <div class="topbar-title">
+            <span id="globalStatusDot" class="status-dot unknown" aria-hidden="true"></span>
+            <div>
+              <h1>Monitoring Center</h1>
+              <p id="globalStatusText">Lokalny monitoring urządzeń, usług i stron WWW.</p>
+            </div>
+          </div>
+          <div class="topbar-actions">
+            <span id="lastRefreshAt">Odświeżono: -</span>
+            <button id="refreshBtn" type="button" aria-label="Odśwież dane">↻</button>
+            <label class="theme-select" title="Motyw">
+              <span class="sr-only">Motyw</span>
+              <select id="themeMode">
+                <option value="auto">Auto</option>
+                <option value="light">Jasny</option>
+                <option value="dark">Ciemny</option>
+              </select>
+            </label>
+            <button id="themeBtn" type="button" aria-label="Przełącz motyw">Motyw</button>
+            <button data-open-form="ping_host" class="primary" type="button">Dodaj monitor</button>
+          </div>
+        </header>
+
+        <main id="mainContent">
+          <section id="dashboard" class="view active">
+            <div class="view-head">
+              <div>
+                <h2>Dashboard</h2>
+                <p>Najważniejsze stany, SLO i ostatnie zdarzenia z całego monitoringu.</p>
+              </div>
+              <label>Zakres typu<select id="dashboardTypeFilter"></select></label>
+            </div>
+
+            <div class="kpi-grid metrics">
+              <article><small>Wszystkie</small><span id="metricTotal">0</span></article>
+              <article><small>Online</small><span id="metricOnline">0</span></article>
+              <article><small>Offline / error</small><span id="metricError">0</span></article>
+              <article><small>Warning</small><span id="metricWarning">0</span></article>
+              <article><small>Maintenance</small><span id="metricMaintenance">0</span></article>
+              <article><small>Wyłączone</small><span id="metricDisabled">0</span></article>
+              <article><small>Śr. odpowiedź</small><span id="metricAvg">-</span></article>
+              <article><small>Uptime 24h</small><span id="metricUptime24">-</span></article>
+              <article><small>Uptime 7d</small><span id="metricUptime7">-</span></article>
+              <article><small>Incydenty</small><span id="metricIncidents">0</span></article>
+            </div>
+
+            <div class="dashboard-grid">
+              <section class="panel span-2">
+                <div class="panel-head">
+                  <h3>Status globalny</h3>
+                  <span id="dashboardSystemBadge" class="badge unknown">unknown</span>
+                </div>
+                <div id="availabilityChart" class="chart"></div>
+              </section>
+              <section class="panel">
+                <h3>SLO / Uptime</h3>
+                <div id="sloGrid" class="slo-grid"></div>
+              </section>
+              <section class="panel">
+                <h3>Scheduler</h3>
+                <div id="schedulerStatus" class="list empty">Brak danych</div>
+              </section>
+              <section class="panel">
+                <h3>Najgorsze monitory</h3>
+                <div id="worstMonitors" class="list empty">Brak danych</div>
+              </section>
+              <section class="panel">
+                <h3>Ostatnie incydenty</h3>
+                <div id="recentIncidents" class="list empty">Brak danych</div>
+              </section>
+              <section class="panel">
+                <h3>Zmiany WWW</h3>
+                <div id="recentChanges" class="list empty">Brak danych</div>
+              </section>
+              <section class="panel">
+                <h3>Certyfikaty SSL</h3>
+                <div id="sslExpiryList" class="list empty">Brak danych</div>
+              </section>
+            </div>
+          </section>
+
+          <section id="monitoring" class="view">
+            <div class="view-head">
+              <div>
+                <h2>Monitoring</h2>
+                <p id="monitorCountLabel">0 z 0</p>
+              </div>
+              <div class="actions compact-actions">
+                <button data-open-form="ping_host" class="primary" type="button">Dodaj monitor</button>
+              </div>
+            </div>
+
+            <section class="panel filter-panel">
+              <div class="filters">
+                <label>Typ monitora<select id="monitorTypeFilter"></select></label>
+                <label>Status<select id="monitorStatusFilter">
+                  <option value="all">Wszystkie</option>
+                  <option value="ok">Online / OK</option>
+                  <option value="warning">Warning</option>
+                  <option value="error">Offline / error</option>
+                  <option value="unknown">Unknown</option>
+                  <option value="maintenance">Maintenance</option>
+                  <option value="disabled">Wyłączone</option>
+                </select></label>
+                <label>Grupa<select id="monitorGroupFilter"></select></label>
+                <label>Maintenance<select id="monitorMaintenanceFilter">
+                  <option value="all">Wszystkie</option>
+                  <option value="active">W serwisie</option>
+                  <option value="inactive">Poza serwisem</option>
+                </select></label>
+                <label>Aktywność<select id="monitorEnabledFilter">
+                  <option value="all">Wszystkie</option>
+                  <option value="enabled">Aktywne</option>
+                  <option value="disabled">Wyłączone</option>
+                </select></label>
+                <label>Wyszukaj<input id="monitorSearch" placeholder="Nazwa, host, URL, grupa, typ" /></label>
+                <label>Sortuj<select id="monitorSort">
+                  <option value="name">Nazwa</option>
+                  <option value="status">Status</option>
+                  <option value="response">Czas odpowiedzi</option>
+                  <option value="uptime">Uptime</option>
+                  <option value="last_checked">Ostatnie sprawdzenie</option>
+                  <option value="type">Typ</option>
+                  <option value="group">Grupa</option>
+                </select></label>
+                <label>Widok<select id="monitorView">
+                  <option value="cards">Karty</option>
+                  <option value="table">Tabela</option>
+                </select></label>
+              </div>
+              <div class="bulk-bar">
+                <label class="check"><input id="selectAllMonitors" type="checkbox" /> Zaznacz widoczne</label>
+                <span id="bulkSelectionCount">0 zaznaczonych</span>
+                <button data-bulk-action="enable" type="button">Włącz</button>
+                <button data-bulk-action="disable" type="button">Wyłącz</button>
+                <button data-bulk-action="check" type="button">Sprawdź teraz</button>
+                <button data-bulk-action="maint-30" type="button">Serwis 30 min</button>
+                <button data-bulk-action="maint-120" type="button">Serwis 2h</button>
+                <button data-bulk-action="delete" class="danger-action" type="button">Usuń</button>
+              </div>
+            </section>
+
+            <div id="monitorList" class="cards monitor-grid"></div>
+            <section id="monitorTableWrap" class="panel table-wrap hidden">
+              <table>
+                <thead>
+                  <tr>
+                    <th><span class="sr-only">Zaznacz</span></th>
+                    <th>Status</th>
+                    <th>Typ</th>
+                    <th>Nazwa</th>
+                    <th>Adres / URL / IP / Encja</th>
+                    <th>HTTP</th>
+                    <th>Odpowiedź</th>
+                    <th>Interwał</th>
+                    <th>Grupa</th>
+                    <th>Ostatni test</th>
+                    <th>Akcje</th>
+                  </tr>
+                </thead>
+                <tbody id="monitorTableRows"></tbody>
+              </table>
+            </section>
+          </section>
+
+          <section id="groups" class="view">
+            <div class="view-head">
+              <div>
+                <h2>Grupy</h2>
+                <p>Zarządzanie logicznymi obszarami monitoringu i maintenance mode.</p>
+              </div>
+            </div>
+            <section class="panel">
+              <form id="groupForm" class="grid-form">
+                <input type="hidden" name="id" />
+                <label>Nazwa<input name="name" required maxlength="120" placeholder="Sieć domowa" /></label>
+                <label>Opis<input name="description" maxlength="500" placeholder="Opcjonalny opis" /></label>
+                <label>Kolor<input name="color" type="color" value="#0f766e" /></label>
+                <button class="primary">Zapisz grupę</button>
+              </form>
+            </section>
+            <div id="groupList" class="cards group-grid"></div>
+            <section class="panel">
+              <h3>Monitory wybranej grupy</h3>
+              <div id="groupMonitorList" class="list empty">Wybierz grupę kartą lub filtrem.</div>
+            </section>
+          </section>
+
+          <section id="monitorDetail" class="view">
+            <div class="view-head">
+              <div>
+                <button id="detailBackBtn" type="button">← Wróć</button>
+                <h2 id="detailTitle">Monitor</h2>
+                <p id="detailSubtitle"></p>
+              </div>
+              <div class="actions compact-actions">
+                <label class="detail-search">Wyszukaj monitoring<input id="detailMonitorSearch" list="detailMonitorOptions" placeholder="Nazwa, host, URL" /></label>
+                <datalist id="detailMonitorOptions"></datalist>
+                <button id="detailEditBtn" type="button">Edytuj</button>
+                <button id="detailCheckBtn" class="primary" type="button">Test</button>
+                <div id="detailExtraActions" class="actions compact-actions"></div>
+              </div>
+            </div>
+            <div id="detailMetrics" class="metrics detail-metrics"></div>
+            <div class="split">
+              <section class="panel">
+                <h3>Szczegóły</h3>
+                <dl id="detailData" class="diagnostics"></dl>
+              </section>
+              <section class="panel">
+                <h3>SLO / Uptime</h3>
+                <div id="detailSlo" class="slo-grid"></div>
+              </section>
+            </div>
+            <section class="panel table-wrap">
+              <h3>Timeline</h3>
+              <div id="detailTimeline" class="timeline empty">Brak danych</div>
+            </section>
+            <section class="panel table-wrap">
+              <h3>Historia odpowiedzi</h3>
+              <table>
+                <thead>
+                  <tr>
+                    <th>Data</th>
+                    <th>Status</th>
+                    <th>Odpowiedź</th>
+                    <th>HTTP</th>
+                    <th>Zmiana</th>
+                    <th>Suma WWW</th>
+                    <th>Szczegóły</th>
+                    <th>Błąd</th>
+                  </tr>
+                </thead>
+                <tbody id="detailHistoryRows"></tbody>
+              </table>
+            </section>
+            <section id="detailSnapshotsSection" class="panel">
+              <div class="panel-head">
+                <h3>Zmiany zawartości</h3>
+                <button id="detailSnapshotsBtn" type="button">Pokaż diff</button>
+              </div>
+              <div id="detailSnapshots" class="list empty">Brak danych</div>
+            </section>
+          </section>
+
+          <section id="monitorTestRun" class="view">
+            <div class="view-head">
+              <div>
+                <button id="testBackBtn" type="button">← Wróć</button>
+                <h2 id="testRunTitle">Test monitora</h2>
+                <p id="testRunSubtitle"></p>
+              </div>
+              <div class="actions compact-actions">
+                <button id="testEditBtn" type="button">Edytuj</button>
+                <button id="testRepeatBtn" class="primary" type="button">Test ponownie</button>
+              </div>
+            </div>
+            <section class="panel test-run-hero">
+              <div>
+                <div id="testRunState" class="run-state"></div>
+                <h3>Aktualny test</h3>
+              </div>
+              <dl class="run-timing">
+                <div><dt>Czas</dt><dd id="testRunElapsed">0:00</dd></div>
+                <div><dt>Start</dt><dd id="testRunStarted">-</dd></div>
+                <div><dt>Koniec</dt><dd id="testRunFinished">-</dd></div>
+              </dl>
+            </section>
+            <div id="testRunMetrics" class="metrics detail-metrics"></div>
+            <div class="split">
+              <section class="panel"><h3>Ustawienia monitoringu</h3><dl id="testRunSettings" class="diagnostics"></dl></section>
+              <section class="panel"><h3>Zakres testu</h3><dl id="testRunScope" class="diagnostics"></dl></section>
+            </div>
+            <div class="split">
+              <section class="panel"><h3>Przebieg</h3><div id="testRunSteps" class="run-steps"></div></section>
+              <section class="panel"><h3>Wynik</h3><div id="testRunResult" class="list"></div></section>
+            </div>
+          </section>
+
+          <section id="incidents" class="view">
+            <div class="view-head">
+              <div>
+                <h2>Incydenty</h2>
+                <p>Osobna lista awarii z czasem trwania, przyczyna i liczba checkow.</p>
+              </div>
+              <button id="incidentsRefreshBtn" type="button">Odśwież</button>
+            </div>
+            <section class="panel filter-panel">
+              <div class="filters">
+                <label>Status<select id="incidentStatusFilter">
+                  <option value="all">Wszystkie</option>
+                  <option value="open">Aktywne</option>
+                  <option value="closed">Zamkniete</option>
+                </select></label>
+                <label>Monitor<select id="incidentMonitorFilter"><option value="">Wszystkie</option></select></label>
+              </div>
+            </section>
+            <section class="panel">
+              <div id="incidentsList" class="timeline empty">Brak danych</div>
+            </section>
+          </section>
+
+          <section id="history" class="view">
+            <div class="view-head">
+              <div>
+                <h2>Historia</h2>
+                <p>Wyniki sprawdzeń, błędy, odpowiedzi HTTP i zmiany treści WWW.</p>
+              </div>
+            </div>
+            <section class="panel filter-panel">
+              <div class="quick-actions">
+                <button type="button" data-history-range="1h">Ostatnia godzina</button>
+                <button type="button" data-history-range="24h">24h</button>
+                <button type="button" data-history-range="7d">7 dni</button>
+                <button type="button" data-history-range="30d">30 dni</button>
+              </div>
+              <div class="filters">
+                <label>Monitor<select id="historyMonitor"><option value="">Wszystkie</option></select></label>
+                <label>Grupa<select id="historyGroup"><option value="">Wszystkie</option></select></label>
+                <label>Typ<select id="historyType"><option value="">Wszystkie</option></select></label>
+                <label>Status<input id="historyStatus" placeholder="online, offline, ok, error" /></label>
+                <label>Od<input id="historyFrom" type="datetime-local" /></label>
+                <label>Do<input id="historyTo" type="datetime-local" /></label>
+                <label>Limit<select id="historyLimit"><option>100</option><option selected>250</option><option>500</option><option>1000</option></select></label>
+                <button id="historyApply" class="primary" type="button">Filtruj</button>
+                <button id="historyClean" type="button">Wyczyść stare</button>
+              </div>
+            </section>
+            <section class="panel table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Data</th>
+                    <th>Monitor</th>
+                    <th>Status</th>
+                    <th>Odpowiedź</th>
+                    <th>HTTP</th>
+                    <th>Suma WWW</th>
+                    <th>Utrata</th>
+                    <th>Błąd</th>
+                  </tr>
+                </thead>
+                <tbody id="historyRows"></tbody>
+              </table>
+            </section>
+          </section>
+
+          <section id="events" class="view">
+            <div class="view-head">
+              <div>
+                <h2>Zdarzenia</h2>
+                <p>Eventy Home Assistant i wewnętrzne zdarzenia aplikacji.</p>
+              </div>
+              <button id="eventsRefreshBtn" type="button">Odśwież</button>
+            </div>
+            <section class="panel filter-panel">
+              <div class="filters">
+                <label>Typ zdarzenia<select id="eventTypeFilter">
+                  <option value="">Wszystkie</option>
+                  <option>monitor_online</option>
+                  <option>monitor_offline</option>
+                  <option>monitor_status_changed</option>
+                  <option>website_changed</option>
+                  <option>website_error</option>
+                  <option>website_hash_changed</option>
+                  <option>ssl_certificate_expiring</option>
+                  <option>dns_record_changed</option>
+                </select></label>
+                <label>Wyszukaj<input id="eventSearch" placeholder="Monitor, target, szczegóły" /></label>
+              </div>
+            </section>
+            <section class="panel">
+              <div id="eventsList" class="timeline empty">Brak danych</div>
+            </section>
+          </section>
+
+          <section id="settings" class="view">
+            <div class="view-head">
+              <div>
+                <h2>Ustawienia</h2>
+                <p>Konfiguracja działania, retencji, bezpieczeństwa i integracji Home Assistant.</p>
+              </div>
+            </div>
+            <form id="settingsForm" class="settings-layout">
+              <section class="panel"><h3>Ogólne</h3><label>Prefix encji<input name="entity_prefix" maxlength="64" /></label></section>
+              <section class="panel"><h3>Retencja danych</h3><label>Retencja dni<input name="retention_days" type="number" min="1" max="3650" /></label><p>Określa, jak długo przechowywać historię, snapshoty i eventy.</p></section>
+              <section class="panel">
+                <h3>Interwały, timeout i stabilizacja</h3>
+                <div class="grid-form">
+                  <label>Domyślny interwał s<input name="default_interval_seconds" type="number" min="5" max="86400" /></label>
+                  <label>Timeout min<input name="default_timeout_minutes" type="number" min="0.01" step="0.01" /></label>
+                  <label>Równoległe checki<input name="max_concurrent_checks" type="number" min="1" max="100" /></label>
+                  <label>Próg awarii<input name="failure_threshold" type="number" min="1" max="20" /></label>
+                  <label>Próg powrotu<input name="recovery_threshold" type="number" min="1" max="20" /></label>
+                  <label>Retry s<input name="retry_delay_seconds" type="number" min="0" max="3600" /></label>
+                </div>
+              </section>
+              <section class="panel"><h3>Limity WWW</h3><label>Limit strony MB<input name="max_page_size_mb" type="number" min="0.01" step="0.01" /></label></section>
+              <section class="panel">
+                <h3>Bezpieczeństwo i Home Assistant</h3>
+                <label class="check"><input name="block_private_networks" type="checkbox" /> Blokuj prywatne adresy dla URL</label>
+                <label class="check"><input name="publish_home_assistant_entities" type="checkbox" /> Publikuj encje Home Assistant</label>
+                <label class="check"><input name="publish_home_assistant_events" type="checkbox" /> Publikuj eventy Home Assistant</label>
+              </section>
+              <section class="panel">
+                <h3>Motyw i wygląd</h3>
+                <label>Gęstość interfejsu<select id="densityMode"><option value="comfortable">Comfortable</option><option value="compact">Compact</option></select></label>
+              </section>
+              <section class="panel span-2">
+                <div class="actions">
+                  <button class="primary" type="submit">Zapisz ustawienia</button>
+                  <button id="settingsResetBtn" type="button">Resetuj formularz</button>
+                </div>
+              </section>
+            </form>
+            <section class="panel">
+              <h3>Import / Export JSON</h3>
+              <div class="actions">
+                <button id="exportBtn" type="button">Eksport JSON</button>
+                <label class="file-button">Import JSON<input id="importFile" type="file" accept="application/json" /></label>
+              </div>
+              <textarea id="exportBox" rows="10" spellcheck="false" readonly></textarea>
+            </section>
+          </section>
+
+          <section id="diagnostics" class="view">
+            <div class="view-head">
+              <div>
+                <h2>Diagnostyka</h2>
+                <p>Status backendu, bazy, schedulera i ostatnie błędy.</p>
+              </div>
+              <button id="diagnosticsRefreshBtn" type="button">Odśwież</button>
+            </div>
+            <div class="split">
+              <section class="panel"><h3>Backend</h3><dl id="diagnosticsData" class="diagnostics"></dl></section>
+              <section class="panel"><h3>Ostatnie błędy</h3><div id="diagnosticsErrors" class="list empty">Brak danych</div></section>
+            </div>
+            <section class="panel">
+              <h3>Logi aplikacji</h3>
+              <pre id="logsBox"></pre>
+            </section>
+          </section>
+        </main>
       </div>
+    </div>
+
+    <nav class="mobile-nav" aria-label="Nawigacja mobilna">
+      <button class="tab active" data-tab="dashboard">Dashboard</button>
+      <button class="tab" data-tab="monitoring">Monitoring</button>
+      <button class="tab" data-tab="incidents">Incydenty</button>
+      <button class="tab" data-tab="history">Historia</button>
+      <button class="tab" data-tab="events">Zdarzenia</button>
+      <button class="tab" data-tab="settings">Więcej</button>
     </nav>
 
-    <main>
-      <section id="dashboard" class="view active">
-        <section class="panel filters">
-          <label>Typ monitora<select id="dashboardTypeFilter"></select></label>
-        </section>
-        <div class="metrics">
-          <article><span id="metricTotal">0</span><small>Wszystkie monitory</small></article>
-          <article><span id="metricOnline">0</span><small>Online / OK</small></article>
-          <article><span id="metricWarning">0</span><small>Warning</small></article>
-          <article><span id="metricError">0</span><small>Error</small></article>
-          <article><span id="metricMaintenance">0</span><small>W serwisie</small></article>
-          <article><span id="metricDisabled">0</span><small>Wyłączone</small></article>
-          <article><span id="metricAvg">-</span><small>Śr. odpowiedź</small></article>
-        </div>
-        <div class="split">
-          <section class="panel">
-            <h2>Ostatnie awarie</h2>
-            <div id="recentFailures" class="list empty">Brak danych</div>
-          </section>
-          <section class="panel">
-            <h2>Ostatnie zmiany WWW</h2>
-            <div id="recentChanges" class="list empty">Brak danych</div>
-          </section>
-        </div>
-        <section class="panel">
-          <h2>Dostępność</h2>
-          <div id="availabilityChart" class="chart"></div>
-        </section>
-        <section class="panel">
-          <h2>SLO / Uptime</h2>
-          <div id="sloGrid" class="slo-grid"></div>
-        </section>
-      </section>
-
-      <section id="devices" class="view">
-        <div class="section-head">
-          <div>
-            <h2>Monitoring</h2>
-            <p id="monitorCountLabel">0 z 0</p>
-          </div>
-          <div class="actions compact-actions">
-            <button data-open-form="ping_host" class="primary">Dodaj monitor</button>
-          </div>
-        </div>
-        <section class="panel filters">
-          <label>Typ monitora<select id="monitorTypeFilter"></select></label>
-          <label>Status<select id="monitorStatusFilter">
-            <option value="all">Wszystkie</option>
-            <option value="ok">OK</option>
-            <option value="warning">Warning</option>
-            <option value="error">Error</option>
-            <option value="maintenance">Serwis</option>
-            <option value="disabled">Wyłączone</option>
-          </select></label>
-          <label>Grupa<select id="monitorGroupFilter"></select></label>
-          <label>Wyszukaj monitoring<input id="monitorSearch" placeholder="Nazwa, host, URL, status" /></label>
-          <label>Sortuj<select id="monitorSort">
-            <option value="name">Nazwa</option>
-            <option value="status">Status</option>
-            <option value="response">Czas odpowiedzi</option>
-            <option value="last_checked">Ostatni test</option>
-            <option value="http">HTTP status</option>
-            <option value="group">Grupa</option>
-          </select></label>
-          <label>Widok<select id="monitorView">
-            <option value="cards">Karty</option>
-            <option value="table">Tabela</option>
-          </select></label>
-          <label>Preset<select id="presetSelect"><option value="">Wybierz preset</option></select></label>
-          <button id="applyPresetBtn">Skopiuj preset</button>
-        </section>
-        <div id="monitorList" class="cards"></div>
-        <section id="monitorTableWrap" class="panel table-wrap hidden">
-          <table>
-            <thead>
-              <tr>
-                <th>Status</th>
-                <th>Typ</th>
-                <th>Nazwa</th>
-                <th>Adres / URL / IP / Encja</th>
-                <th>HTTP</th>
-                <th>Odpowiedź</th>
-                <th>Interwał</th>
-                <th>Grupa</th>
-                <th>Ostatni test</th>
-                <th>Maintenance</th>
-              </tr>
-            </thead>
-            <tbody id="monitorTableRows"></tbody>
-          </table>
-        </section>
-      </section>
-
-      <section id="groups" class="view">
-        <div class="section-head">
-          <h2>Grupy monitorów</h2>
-        </div>
-        <section class="panel">
-          <form id="groupForm" class="grid-form">
-            <input type="hidden" name="id" />
-            <label>Nazwa<input name="name" required maxlength="120" placeholder="Sieć domowa" /></label>
-            <label>Opis<input name="description" maxlength="500" placeholder="Opcjonalny opis" /></label>
-            <label>Kolor<input name="color" type="color" value="#0f766e" /></label>
-            <button class="primary">Zapisz grupę</button>
-          </form>
-        </section>
-        <div id="groupList" class="cards"></div>
-      </section>
-
-      <section id="monitorDetail" class="view">
-        <div class="section-head">
-          <div>
-            <h2 id="detailTitle">Monitor</h2>
-            <p id="detailSubtitle"></p>
-          </div>
-          <div class="actions compact-actions">
-            <label class="detail-search">Wyszukaj monitoring<input id="detailMonitorSearch" list="detailMonitorOptions" placeholder="Nazwa, host, URL" /></label>
-            <datalist id="detailMonitorOptions"></datalist>
-            <button id="detailBackBtn">Wróć</button>
-            <button id="detailEditBtn">Edytuj</button>
-            <button id="detailCheckBtn" class="primary">Test</button>
-            <div id="detailExtraActions" class="actions compact-actions"></div>
-          </div>
-        </div>
-        <div id="detailMetrics" class="metrics detail-metrics"></div>
-        <div class="split">
-          <section class="panel">
-            <h2>Szczegóły</h2>
-            <dl id="detailData" class="diagnostics"></dl>
-          </section>
-          <section class="panel">
-            <h2>SLO / Uptime</h2>
-            <div id="detailSlo" class="slo-grid"></div>
-          </section>
-        </div>
-        <section class="panel table-wrap">
-          <h2>Historia odpowiedzi</h2>
-          <table>
-            <thead>
-              <tr>
-                <th>Data</th>
-                <th>Status</th>
-                <th>Odpowiedź</th>
-                <th>HTTP</th>
-                <th>Zmiana</th>
-                <th>Suma WWW</th>
-                <th>Szczegóły</th>
-                <th>Błąd</th>
-              </tr>
-            </thead>
-            <tbody id="detailHistoryRows"></tbody>
-          </table>
-        </section>
-        <section id="detailSnapshotsSection" class="panel">
-          <div class="section-head">
-            <h2>Zmiany zawartości</h2>
-            <button id="detailSnapshotsBtn">Pokaż diff</button>
-          </div>
-          <div id="detailSnapshots" class="list empty">Brak danych</div>
-        </section>
-      </section>
-
-      <section id="monitorTestRun" class="view">
-        <div class="section-head">
-          <div>
-            <h2 id="testRunTitle">Test monitora</h2>
-            <p id="testRunSubtitle"></p>
-          </div>
-          <div class="actions compact-actions">
-            <button id="testBackBtn">Wróć</button>
-            <button id="testEditBtn">Edytuj</button>
-            <button id="testRepeatBtn" class="primary">Test ponownie</button>
-          </div>
-        </div>
-        <section class="panel test-run-hero">
-          <div>
-            <div id="testRunState" class="run-state"></div>
-            <h2>Aktualny test</h2>
-          </div>
-          <dl class="run-timing">
-            <div><dt>Czas</dt><dd id="testRunElapsed">0:00</dd></div>
-            <div><dt>Start</dt><dd id="testRunStarted">-</dd></div>
-            <div><dt>Koniec</dt><dd id="testRunFinished">-</dd></div>
-          </dl>
-        </section>
-        <div id="testRunMetrics" class="metrics detail-metrics"></div>
-        <div class="split">
-          <section class="panel">
-            <h2>Ustawienia monitoringu</h2>
-            <dl id="testRunSettings" class="diagnostics"></dl>
-          </section>
-          <section class="panel">
-            <h2>Zakres testu</h2>
-            <dl id="testRunScope" class="diagnostics"></dl>
-          </section>
-        </div>
-        <div class="split">
-          <section class="panel">
-            <h2>Przebieg</h2>
-            <div id="testRunSteps" class="run-steps"></div>
-          </section>
-          <section class="panel">
-            <h2>Wynik</h2>
-            <div id="testRunResult" class="list"></div>
-          </section>
-        </div>
-      </section>
-
-      <section id="history" class="view">
-        <section class="panel filters">
-          <label>Monitor<select id="historyMonitor"><option value="">Wszystkie</option></select></label>
-          <label>Typ<select id="historyType"><option value="">Wszystkie</option></select></label>
-          <label>Status<input id="historyStatus" placeholder="online, offline, ok, error" /></label>
-          <label>Od<input id="historyFrom" type="datetime-local" /></label>
-          <label>Do<input id="historyTo" type="datetime-local" /></label>
-          <button id="historyApply" class="primary">Filtruj</button>
-          <button id="historyClean">Wyczyść stare</button>
-        </section>
-        <section class="panel table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Data</th>
-                <th>Monitor</th>
-                <th>Status</th>
-                <th>Odpowiedź</th>
-                <th>HTTP</th>
-                <th>Suma WWW</th>
-                <th>Utrata</th>
-                <th>Błąd</th>
-              </tr>
-            </thead>
-            <tbody id="historyRows"></tbody>
-          </table>
-        </section>
-      </section>
-
-      <section id="settings" class="view">
-        <section class="panel">
-          <h2>Ustawienia</h2>
-          <form id="settingsForm" class="grid-form">
-            <label>Retencja dni<input name="retention_days" type="number" min="1" max="3650" /></label>
-            <label>Domyślny interwał s<input name="default_interval_seconds" type="number" min="5" max="86400" /></label>
-            <label>Timeout min<input name="default_timeout_minutes" type="number" min="0.01" step="0.01" /></label>
-            <label>Limit strony MB<input name="max_page_size_mb" type="number" min="0.01" step="0.01" /></label>
-            <label>Prefix encji<input name="entity_prefix" maxlength="64" /></label>
-            <label class="check"><input name="block_private_networks" type="checkbox" /> Blokuj prywatne adresy dla URL</label>
-            <label class="check"><input name="publish_home_assistant_entities" type="checkbox" /> Publikuj encje Home Assistant</label>
-            <label class="check"><input name="publish_home_assistant_events" type="checkbox" /> Publikuj eventy Home Assistant</label>
-            <button class="primary">Zapisz ustawienia</button>
-          </form>
-        </section>
-        <section class="panel">
-          <h2>Import / Export</h2>
-          <div class="actions">
-            <button id="exportBtn">Eksport JSON</button>
-            <label class="file-button">Import JSON<input id="importFile" type="file" accept="application/json" /></label>
-          </div>
-          <textarea id="exportBox" rows="10" spellcheck="false" readonly></textarea>
-        </section>
-      </section>
-
-      <section id="diagnostics" class="view">
-        <div class="split">
-          <section class="panel">
-            <h2>Diagnostyka</h2>
-            <dl id="diagnosticsData" class="diagnostics"></dl>
-          </section>
-          <section class="panel">
-            <h2>Zdarzenia</h2>
-            <div id="eventsList" class="list empty">Brak danych</div>
-          </section>
-        </div>
-        <section class="panel">
-          <h2>Logi aplikacji</h2>
-          <pre id="logsBox"></pre>
-        </section>
-      </section>
-    </main>
-
-    <dialog id="monitorDialog">
+    <dialog id="monitorDialog" class="drawer-dialog">
       <form id="monitorForm" method="dialog">
         <input type="hidden" name="id" />
-        <h2 id="dialogTitle">Monitor</h2>
-        <label>Typ monitora<select name="type" id="monitorTypeSelect"></select></label>
-        <label>Nazwa<input name="name" required maxlength="120" /></label>
-        <label id="targetLabel">Cel<input name="target" required /></label>
-        <label>Grupa<select name="group_id" id="monitorGroupSelect"><option value="">Bez grupy</option></select></label>
-        <label>Interwał s<input name="interval_seconds" type="number" min="5" max="86400" placeholder="z ustawień" /></label>
-        <label class="check"><input name="enabled" type="checkbox" checked /> Aktywny</label>
-        <div id="tcpOptions" class="nested type-options">
-          <label>Host/IP<input name="tcp_host" placeholder="192.168.1.10" /></label>
-          <label>Port<input name="tcp_port" type="number" min="1" max="65535" placeholder="22" /></label>
+        <div class="drawer-head">
+          <div>
+            <h2 id="dialogTitle">Monitor</h2>
+            <p>Skonfiguruj typ, cel i parametry sprawdzania. WWW pozostaje typem monitora.</p>
+          </div>
+          <button id="cancelMonitorBtn" type="button" aria-label="Zamknij">×</button>
         </div>
-        <div id="httpOptions" class="nested type-options">
-          <label>Oczekiwane kody HTTP<input name="expected_status_codes" placeholder="200,204,301" /></label>
-        </div>
-        <div id="websiteOptions" class="nested type-options">
-          <label>Selektor CSS<input name="css_selector" placeholder="np. main article" /></label>
-          <label>Ignorowane regexy<textarea name="ignore_patterns" rows="4" placeholder="Jedna reguła na linię"></textarea></label>
-          <label>Limit strony MB<input name="max_page_size_mb" type="number" min="0.01" step="0.01" /></label>
-        </div>
-        <div id="dnsOptions" class="nested type-options">
-          <label>Typ rekordu<select name="record_type"><option>A</option><option>AAAA</option><option>CNAME</option><option>MX</option><option>TXT</option></select></label>
-        </div>
-        <div id="sslOptions" class="nested type-options">
-          <label>Host<input name="ssl_host" placeholder="example.com" /></label>
-          <label>Port<input name="ssl_port" type="number" min="1" max="65535" placeholder="443" /></label>
-          <label>Próg warning dni<input name="warning_days" type="number" min="1" max="3650" placeholder="30" /></label>
-          <label>Próg error dni<input name="error_days" type="number" min="0" max="3650" placeholder="7" /></label>
-        </div>
-        <div id="restOptions" class="nested type-options">
-          <label>Ścieżka JSON<input name="json_path" placeholder="status.online" /></label>
-          <label>Oczekiwana wartość<input name="expected_value" placeholder="true" /></label>
-        </div>
-        <div id="haEntityOptions" class="nested type-options">
-          <label>Stany alarmowe<input name="alert_states" placeholder="unavailable,unknown,off" /></label>
-        </div>
-        <div id="mqttOptions" class="nested type-options">
-          <label>Host/IP brokera<input name="mqtt_host" placeholder="192.168.1.60" /></label>
-          <label>Port MQTT<input name="mqtt_port" type="number" min="1" max="65535" placeholder="1883" /></label>
-          <label>Topic<input name="topic" placeholder="home/status" /></label>
-          <label>Timeout topicu s<input name="topic_timeout_seconds" type="number" min="1" /></label>
-        </div>
-        <label class="check"><input name="test_on_save" type="checkbox" checked /> Testuj przy zapisie</label>
-        <div id="monitorTestResult" class="test-result hidden" role="status"></div>
+        <section class="form-section">
+          <h3>Typ monitora</h3>
+          <select name="type" id="monitorTypeSelect" class="sr-only"></select>
+          <div id="monitorTypeCards" class="type-card-grid"></div>
+        </section>
+        <section class="form-section grid-form">
+          <label>Nazwa<input name="name" required maxlength="120" placeholder="Router, NAS, example.com" /></label>
+          <label id="targetLabel">Cel<input name="target" required placeholder="IP, hostname, URL albo entity_id" /></label>
+          <label>Grupa<select name="group_id" id="monitorGroupSelect"><option value="">Bez grupy</option></select></label>
+          <label>Interwał sprawdzania s<input name="interval_seconds" type="number" min="5" max="86400" placeholder="z ustawień" /></label>
+          <label class="check"><input name="enabled" type="checkbox" checked /> Aktywny</label>
+          <label class="check"><input name="test_on_save" type="checkbox" checked /> Testuj przy zapisie</label>
+        </section>
+        <section class="form-section">
+          <h3>Pola typu</h3>
+          <div id="tcpOptions" class="nested type-options"><label>Host/IP<input name="tcp_host" placeholder="192.168.1.10" /></label><label>Port<input name="tcp_port" type="number" min="1" max="65535" placeholder="22" /></label></div>
+          <div id="httpOptions" class="nested type-options"><label>Oczekiwane kody HTTP<input name="expected_status_codes" placeholder="200,204,301" /></label></div>
+          <div id="websiteOptions" class="nested type-options"><label>Selektor CSS<input name="css_selector" placeholder="np. main article" /></label><label>Ignorowane regexy<textarea name="ignore_patterns" rows="4" placeholder="Jedna reguła na linię"></textarea></label><label>Limit strony MB<input name="max_page_size_mb" type="number" min="0.01" step="0.01" /></label></div>
+          <div id="dnsOptions" class="nested type-options"><label>Typ rekordu<select name="record_type"><option>A</option><option>AAAA</option><option>CNAME</option><option>MX</option><option>TXT</option></select></label></div>
+          <div id="sslOptions" class="nested type-options"><label>Host<input name="ssl_host" placeholder="example.com" /></label><label>Port<input name="ssl_port" type="number" min="1" max="65535" placeholder="443" /></label><label>Próg warning dni<input name="warning_days" type="number" min="1" max="3650" placeholder="30" /></label><label>Próg error dni<input name="error_days" type="number" min="0" max="3650" placeholder="7" /></label></div>
+          <div id="restOptions" class="nested type-options"><label>Ścieżka JSON<input name="json_path" placeholder="status.online" /></label><label>Oczekiwana wartość<input name="expected_value" placeholder="true" /></label></div>
+          <div id="haEntityOptions" class="nested type-options"><label>Stany alarmowe<input name="alert_states" placeholder="unavailable,unknown,off" /></label></div>
+          <div id="mqttOptions" class="nested type-options"><label>Host/IP brokera<input name="mqtt_host" placeholder="192.168.1.60" /></label><label>Port MQTT<input name="mqtt_port" type="number" min="1" max="65535" placeholder="1883" /></label><label>Topic<input name="topic" placeholder="home/status" /></label><label>Timeout topicu s<input name="topic_timeout_seconds" type="number" min="1" /></label></div>
+        </section>
+        <section class="form-section split">
+          <div>
+            <h3>Presety</h3>
+            <div class="actions">
+              <label class="grow">Preset<select id="presetSelect"><option value="">Wybierz preset</option></select></label>
+              <button id="applyPresetBtn" type="button">Skopiuj preset</button>
+            </div>
+            <div id="monitorTestResult" class="test-result hidden" role="status"></div>
+          </div>
+          <div>
+            <h3>Podgląd JSON</h3>
+            <pre id="configPreview" class="json-preview">{}</pre>
+          </div>
+        </section>
         <menu>
-          <button id="cancelMonitorBtn" type="button" value="cancel">Anuluj</button>
-          <button id="testMonitorBtn" value="default" type="button">Sprawdź teraz</button>
+          <button type="button" data-dialog-close="monitorDialog">Anuluj</button>
+          <button id="testMonitorBtn" value="default" type="button">Testuj teraz</button>
           <button id="saveMonitorBtn" value="default" class="primary">Zapisz</button>
         </menu>
       </form>
@@ -393,7 +573,26 @@
       </form>
     </dialog>
 
+    <dialog id="historyDialog">
+      <form method="dialog">
+        <h2>Szczegóły historii</h2>
+        <dl id="historyDetailData" class="diagnostics"></dl>
+        <menu><button>Zamknij</button></menu>
+      </form>
+    </dialog>
+
+    <dialog id="confirmDialog">
+      <form method="dialog">
+        <h2 id="confirmTitle">Potwierdzenie</h2>
+        <p id="confirmText"></p>
+        <menu>
+          <button value="cancel">Anuluj</button>
+          <button id="confirmAcceptBtn" value="default" class="primary">Wykonaj</button>
+        </menu>
+      </form>
+    </dialog>
+
     <div id="toast" role="status" aria-label="Komunikat aplikacji" title="Kliknij, aby zamknąć"></div>
-    <script src="static/app.js?v=0.5.6"></script>
+    <script src="static/app.js?v=0.7.0"></script>
   </body>
 </html>

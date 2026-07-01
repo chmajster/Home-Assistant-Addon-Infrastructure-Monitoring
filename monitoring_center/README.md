@@ -57,6 +57,16 @@ Migracje są wykonywane automatycznie przy starcie.
 4. Uruchom dodatek.
 5. Otwórz panel z sidebaru albo przyciskiem **Open Web UI**.
 
+## Panel WWW
+
+Nowy panel administracyjny ma zakladki **Dashboard**, **Monitoring**, **Grupy**, **Historia**, **Zdarzenia**,
+**Ustawienia** i **Diagnostyka**. Widok **Monitoring** laczy wszystkie typy monitorow w jednym miejscu:
+urzadzenia, TCP, DNS, SSL, REST, encje Home Assistant, MQTT oraz monitoring WWW. Strony WWW nie sa osobna
+glowna sekcja - sa filtrowane jako typy `http_status`, `http_hash` i `rest_api`.
+
+Panel obsluguje widok kart/tabeli, filtry, sortowanie, masowe akcje, maintenance mode, test monitora przed
+zapisem, import/export JSON, motyw jasny/ciemny/auto oraz responsywna nawigacje dla Home Assistant Ingress.
+
 ## Konfiguracja
 
 Opcje startowe są w `config.yaml`, a przykładowy plik znajduje się w `options.example.json`. Monitorami zarządza się z poziomu UI dodatku.

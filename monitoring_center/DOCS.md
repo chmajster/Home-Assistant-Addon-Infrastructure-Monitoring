@@ -1,5 +1,26 @@
 # Monitoring Center - dokumentacja dodatku
 
+## Nowy panel WWW
+
+Panel ma sekcje: **Dashboard**, **Monitoring**, **Grupy**, **Historia**, **Zdarzenia**, **Ustawienia**
+i **Diagnostyka**. Na desktopie dostepna jest boczna nawigacja, a na telefonie dolna nawigacja.
+
+- **Dashboard** pokazuje KPI, globalny status, SLO, najgorsze monitory, ostatnie incydenty, zmiany WWW
+  i certyfikaty SSL blisko wygasniecia.
+- **Monitoring** jest glownym widokiem wszystkich monitorow. Monitoring WWW pozostaje typem monitora
+  (`http_status`, `http_hash`, `rest_api`) i jest filtrowany w tym samym widoku, bez osobnej glownej zakladki.
+- Widok **Monitoring** obsluguje karty i tabele, wyszukiwarke, filtry statusu, typu, grupy, maintenance
+  i aktywnosci, sortowanie oraz masowe akcje.
+- Kategorie frontendowe sa neutralne wobec starych zakladek: `network`, `website`, `home_assistant`,
+  `protocol` i `other`. `website` jest tylko kategoria typu monitora, nie osobnym glownym widokiem.
+- Formularz dodawania i edycji monitora jest drawerem z kafelkami typow, presetami, testem przed zapisem
+  i podgladem JSON konfiguracji.
+- **Historia** ma filtry monitora, grupy, typu, statusu, zakresu dat i szybkie zakresy 1h/24h/7d/30d.
+- **Zdarzenia** pokazuja eventy aplikacji i Home Assistant z filtrem typu eventu.
+- **Ustawienia** sa podzielone na sekcje: ogolne, retencja, interwaly i timeout, limity WWW,
+  SSRF/Home Assistant, motyw i import/export.
+- Motyw `auto`, jasny i ciemny oraz gestosc interfejsu sa zapisywane w `localStorage`.
+
 Po uruchomieniu dodatek tworzy lokalny serwer na porcie `8099` i publikuje panel przez Home Assistant Ingress. Wszystkie dane trwałe są zapisywane w `/data`.
 
 ## Pierwsze uruchomienie

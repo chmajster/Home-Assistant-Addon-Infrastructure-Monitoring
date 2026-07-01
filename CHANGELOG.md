@@ -4,17 +4,31 @@ Wszystkie istotne zmiany w projekcie **Home Assistant Monitoring / Monitoring Ce
 
 Format opiera się na konwencji Keep a Changelog, a wersjonowanie dodatku powinno podążać za SemVer tam, gdzie ma to zastosowanie.
 
-## [0.5.6] - 2026-06-30
+## [0.7.0] - 2026-07-01
+
+### Added
+
+- Dodano osobne incydenty w bazie danych, API i UI, z czasem trwania, statusem, przyczyna i liczba checkow.
+- Dodano dashboardowy status schedulera: dzialanie petli, ostatni tick, aktywne testy, kolejke i bledy.
+- Dodano timeline monitora laczacy zdarzenia lifecycle, statusy, zmiany WWW, limity strony i incydenty.
 
 ### Changed
 
+- Scheduler przechowuje taski checkow, usuwa zakonczone taski, anuluje je przy stopie i loguje wyjatki taskow.
+- Podniesiono wersje dodatku i metadanych aplikacji do `0.7.0`.
+
+## [0.6.0] - 2026-07-01
+
+### Changed
+
+- Przebudowano panel WWW jako responsywny panel administracyjny z boczna/mobilna nawigacja, rozbudowanym dashboardem, widokiem zdarzen, masowymi akcjami monitorow, formularzem typow jako kafelki, podgladem JSON oraz rozszerzona diagnostyka i ustawieniami.
 - Timeout monitorow uzywa teraz globalnej wartosci z `Ustawien` jako domyslnej, ale honoruje tez per-monitor `timeout_minutes` albo `timeout_seconds` w konfiguracji monitora.
 - Dodano globalny `default_interval_seconds` w ustawieniach jako domyslny interwal nowych monitorow.
 - Dodano migracje `SCHEMA_VERSION = 7`, ktora przenosi stare ustawienia interwalu do `default_interval_seconds`.
 - Dodano migracje `SCHEMA_VERSION = 8` dla licznikow runtime uzywanych przez ochrone przed flappingiem.
 - Dodano limit rownoleglych sprawdzen, diagnostyke schedulera, progi failure/recovery i opoznienie retry.
 - Dodano podstawowe testy pytest dla timeoutow, migracji, progow i limitu rownoleglosci oraz workflow GitHub Actions CI.
-- Podniesiono wersje dodatku i metadanych aplikacji do `0.5.6`.
+- Podniesiono wersje dodatku i metadanych aplikacji do `0.6.0`.
 
 ## [0.5.5] - 2026-06-30
 
