@@ -11,7 +11,14 @@ from bs4 import BeautifulSoup
 
 from ..config import AppConfig
 from ..validators import ensure_public_url_if_required, validate_url
-from .base import CheckResult, MonitorContext, csv_ints, normalize_timeout_config, positive_float, timeout_seconds_from_config
+from .base import (
+    CheckResult,
+    MonitorContext,
+    csv_ints,
+    normalize_timeout_config,
+    positive_float,
+    timeout_seconds_from_config,
+)
 
 LOGGER = logging.getLogger(__name__)
 PAGE_SIZE_LIMIT_ERROR = "Configured page size limit exceeded"

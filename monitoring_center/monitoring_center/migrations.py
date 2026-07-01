@@ -5,7 +5,7 @@ import shutil
 from .database import Database, dumps_json, loads_json
 
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 
 def migrate(db: Database) -> None:
@@ -43,6 +43,9 @@ def migrate(db: Database) -> None:
     if version < 7:
         _migration_007(db)
         db.execute("INSERT INTO schema_migrations(version) VALUES (?)", (7,))
+    if version < 8:
+        _migration_008(db)
+        db.execute("INSERT INTO schema_migrations(version) VALUES (?)", (8,))
 
 
 def _backup_database(db: Database) -> None:
@@ -248,7 +251,9 @@ def _migration_004(db: Database) -> None:
             """,
             (dumps_json(max(_safe_float(max_page_size_kb, 512) / 1024, 1 / 1024)),),
         )
-    db.execute("DELETE FROM settings WHERE key IN ('request_timeout_seconds', 'ping_timeout_seconds', 'max_page_size_kb')")
+    db.execute(
+        "DELETE FROM settings WHERE key IN ('request_timeout_seconds', 'ping_timeout_seconds', 'max_page_size_kb')"
+    )
 
     for row in db.fetchall("SELECT id, config_json FROM monitors"):
         config = loads_json(row.get("config_json"), {})
@@ -320,13 +325,12 @@ def _migration_007(db: Database) -> None:
         )
     db.execute("DELETE FROM settings WHERE key IN ('default_device_interval', 'default_website_interval')")
 
-    for row in db.fetchall("SELECT id, config_json FROM monitors"):
-        config = loads_json(row.get("config_json"), {})
-        if "timeout_minutes" not in config and "timeout_seconds" not in config:
-            continue
-        config.pop("timeout_minutes", None)
-        config.pop("timeout_seconds", None)
-        db.execute(
-            "UPDATE monitors SET config_json = ?, updated_at = datetime('now') WHERE id = ?",
-            (dumps_json(config), row["id"]),
-        )
+
+def _migration_008(db: Database) -> None:
+    db.executescript(
+        """
+        ALTER TABLE monitors ADD COLUMN failure_count INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE monitors ADD COLUMN recovery_count INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE monitors ADD COLUMN last_raw_status TEXT;
+        """
+    )

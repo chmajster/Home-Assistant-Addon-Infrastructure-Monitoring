@@ -1277,7 +1277,9 @@ function buildMonitorPayload(form) {
   };
 }
 
-async function testMonitorFromForm() {
+async function testMonitorFromForm(event) {
+  event?.preventDefault();
+  event?.stopPropagation();
   const form = $("#monitorForm");
   if (!form.reportValidity()) return;
   const payload = buildMonitorPayload(form);
@@ -1482,6 +1484,12 @@ async function loadDiagnostics() {
     "Rozmiar bazy": `${diagnostics.database_size_bytes} B`,
     "Liczba monitorów": diagnostics.monitor_count,
     "Ostatni test": formatDate(diagnostics.last_check),
+    "Ostatni tick schedulera": formatDate(diagnostics.scheduler_last_tick),
+    "Aktywne zadania": diagnostics.active_jobs?.join(", ") || "-",
+    "Oczekujące zadania": diagnostics.queued_jobs?.join(", ") || "-",
+    "Limit równoległości": diagnostics.max_concurrent_checks,
+    "Błędy schedulera": diagnostics.scheduler_error_count ?? 0,
+    "Ostatni błąd schedulera": diagnostics.scheduler_last_error || "-",
     "Kolejka zadań": diagnostics.running_jobs?.join(", ") || "-",
     "Plik logu": diagnostics.log_file,
   }).map(([key, value]) => `<dt>${key}</dt><dd>${escapeHtml(String(value ?? "-"))}</dd>`).join("");

@@ -61,10 +61,27 @@ def positive_float(value: Any, default: float, minimum: float = 0.1, maximum: fl
 
 
 def timeout_seconds_from_config(config: dict[str, Any], default_seconds: float, minimum: float = 1.0) -> float:
+    if "timeout_minutes" in config and config["timeout_minutes"] not in (None, ""):
+        timeout_minutes = positive_float(config["timeout_minutes"], default_seconds / 60, minimum / 60, None)
+        return timeout_minutes * 60
+    if "timeout_seconds" in config and config["timeout_seconds"] not in (None, ""):
+        return positive_float(config["timeout_seconds"], default_seconds, minimum, None)
     return positive_float(default_seconds, default_seconds, minimum, None)
 
 
 def normalize_timeout_config(config: dict[str, Any], default_seconds: float, minimum: float = 1.0) -> None:
+    if "timeout_minutes" in config and config["timeout_minutes"] not in (None, ""):
+        config["timeout_minutes"] = positive_float(
+            config["timeout_minutes"],
+            default_seconds / 60,
+            minimum / 60,
+            None,
+        )
+        config.pop("timeout_seconds", None)
+        return
+    if "timeout_seconds" in config and config["timeout_seconds"] not in (None, ""):
+        config["timeout_seconds"] = positive_float(config["timeout_seconds"], default_seconds, minimum, None)
+        return
     config.pop("timeout_seconds", None)
     config.pop("timeout_minutes", None)
 

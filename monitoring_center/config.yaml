@@ -27,6 +27,10 @@ options:
   retention_days: 30
   default_interval_seconds: 300
   default_timeout_minutes: 5
+  max_concurrent_checks: 15
+  failure_threshold: 3
+  recovery_threshold: 2
+  retry_delay_seconds: 10
   max_page_size_mb: 5
   block_private_networks: false
   publish_home_assistant_entities: true
@@ -39,6 +43,10 @@ schema:
   retention_days: int(1,3650)
   default_interval_seconds: int(5,86400)
   default_timeout_minutes: float(0,)
+  max_concurrent_checks: int(1,100)
+  failure_threshold: int(1,20)
+  recovery_threshold: int(1,20)
+  retry_delay_seconds: int(0,3600)
   max_page_size_mb: float(0,)
   block_private_networks: bool
   publish_home_assistant_entities: bool

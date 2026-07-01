@@ -8,9 +8,12 @@ Format opiera się na konwencji Keep a Changelog, a wersjonowanie dodatku powinn
 
 ### Changed
 
-- Timeout monitorow jest teraz globalny i ustawiany w `Ustawieniach`, bez pola timeoutu na pojedynczym monitorze.
+- Timeout monitorow uzywa teraz globalnej wartosci z `Ustawien` jako domyslnej, ale honoruje tez per-monitor `timeout_minutes` albo `timeout_seconds` w konfiguracji monitora.
 - Dodano globalny `default_interval_seconds` w ustawieniach jako domyslny interwal nowych monitorow.
-- Dodano migracje `SCHEMA_VERSION = 7`, ktora usuwa per-monitor timeout z konfiguracji monitorow i przenosi stare ustawienia interwalu do `default_interval_seconds`.
+- Dodano migracje `SCHEMA_VERSION = 7`, ktora przenosi stare ustawienia interwalu do `default_interval_seconds`.
+- Dodano migracje `SCHEMA_VERSION = 8` dla licznikow runtime uzywanych przez ochrone przed flappingiem.
+- Dodano limit rownoleglych sprawdzen, diagnostyke schedulera, progi failure/recovery i opoznienie retry.
+- Dodano podstawowe testy pytest dla timeoutow, migracji, progow i limitu rownoleglosci oraz workflow GitHub Actions CI.
 - Podniesiono wersje dodatku i metadanych aplikacji do `0.5.6`.
 
 ## [0.5.5] - 2026-06-30

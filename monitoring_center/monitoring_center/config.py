@@ -16,6 +16,10 @@ DEFAULT_OPTIONS: dict[str, Any] = {
     "default_device_interval": 60,
     "default_website_interval": 300,
     "default_timeout_minutes": 5,
+    "max_concurrent_checks": 15,
+    "failure_threshold": 3,
+    "recovery_threshold": 2,
+    "retry_delay_seconds": 10,
     "max_page_size_mb": 5,
     "block_private_networks": False,
     "publish_home_assistant_entities": True,
@@ -34,6 +38,10 @@ class AppConfig:
     default_device_interval: int
     default_website_interval: int
     default_timeout_minutes: float
+    max_concurrent_checks: int
+    failure_threshold: int
+    recovery_threshold: int
+    retry_delay_seconds: int
     max_page_size_mb: float
     block_private_networks: bool
     publish_home_assistant_entities: bool
@@ -73,6 +81,10 @@ class AppConfig:
             default_device_interval=int(data["default_device_interval"]),
             default_website_interval=int(data["default_website_interval"]),
             default_timeout_minutes=float(data["default_timeout_minutes"]),
+            max_concurrent_checks=max(int(data["max_concurrent_checks"]), 1),
+            failure_threshold=max(int(data["failure_threshold"]), 1),
+            recovery_threshold=max(int(data["recovery_threshold"]), 1),
+            retry_delay_seconds=max(int(data["retry_delay_seconds"]), 0),
             max_page_size_mb=float(data["max_page_size_mb"]),
             block_private_networks=bool(data["block_private_networks"]),
             publish_home_assistant_entities=bool(data["publish_home_assistant_entities"]),

@@ -17,6 +17,18 @@ configuration:
   default_timeout_minutes:
     name: Globalny timeout
     description: Globalny timeout wszystkich monitorów w minutach.
+  max_concurrent_checks:
+    name: Równoległe sprawdzenia
+    description: Maksymalna liczba sprawdzeń wykonywanych jednocześnie.
+  failure_threshold:
+    name: Próg awarii
+    description: Liczba kolejnych błędnych sprawdzeń wymagana do statusu awaryjnego.
+  recovery_threshold:
+    name: Próg powrotu
+    description: Liczba kolejnych udanych sprawdzeń wymagana do powrotu monitora online.
+  retry_delay_seconds:
+    name: Opóźnienie retry
+    description: Szybszy ponowny check podczas potwierdzania zmiany statusu.
   max_page_size_mb:
     name: Limit rozmiaru strony
     description: Maksymalny rozmiar pobieranej strony w MB.

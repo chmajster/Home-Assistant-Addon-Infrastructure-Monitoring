@@ -25,7 +25,11 @@ class TcpPortMonitor:
 
     async def check(self, monitor: dict[str, Any], context: MonitorContext) -> CheckResult:
         host, port = _host_port(monitor["target"], monitor["config"])
-        timeout = timeout_seconds_from_config(monitor["config"], context.config.default_timeout_minutes * 60, minimum=0.1)
+        timeout = timeout_seconds_from_config(
+            monitor["config"],
+            context.config.default_timeout_minutes * 60,
+            minimum=0.1,
+        )
         started = time.perf_counter()
         try:
             reader, writer = await asyncio.wait_for(asyncio.open_connection(host, port), timeout=timeout)

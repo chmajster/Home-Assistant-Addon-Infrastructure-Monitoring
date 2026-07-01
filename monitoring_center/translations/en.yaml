@@ -17,6 +17,18 @@ configuration:
   default_timeout_minutes:
     name: Global timeout
     description: Global timeout for all monitors in minutes.
+  max_concurrent_checks:
+    name: Concurrent checks
+    description: Maximum number of checks running at the same time.
+  failure_threshold:
+    name: Failure threshold
+    description: Consecutive failed checks required before a monitor becomes down.
+  recovery_threshold:
+    name: Recovery threshold
+    description: Consecutive successful checks required before a monitor recovers.
+  retry_delay_seconds:
+    name: Retry delay
+    description: Faster retry delay while confirming a pending status change.
   max_page_size_mb:
     name: Page size limit
     description: Maximum downloaded page size in MB.

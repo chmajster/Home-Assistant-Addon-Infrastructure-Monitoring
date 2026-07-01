@@ -6,9 +6,12 @@ All notable changes to the **Monitoring Center** Home Assistant add-on are docum
 
 ### Changed
 
-- Monitor timeout is now global and configured in Settings, with no per-monitor timeout field.
+- Monitor timeout now uses the global Settings value as the default while still honoring per-monitor `timeout_minutes` or `timeout_seconds` in monitor config.
 - Added global `default_interval_seconds` setting as the default interval for new monitors.
-- Added `SCHEMA_VERSION = 7` migration to remove per-monitor timeout config and fold legacy interval settings into `default_interval_seconds`.
+- Added `SCHEMA_VERSION = 7` migration to fold legacy interval settings into `default_interval_seconds`.
+- Added `SCHEMA_VERSION = 8` migration for runtime failure/recovery counters used by flapping protection.
+- Added scheduler concurrency limiting, scheduler diagnostics, failure/recovery thresholds and retry delay settings.
+- Added basic pytest coverage for timeout config, migrations, thresholds and concurrency, plus GitHub Actions CI.
 - Bumped add-on and application metadata version to `0.5.6`.
 
 ## [0.5.5] - 2026-06-30

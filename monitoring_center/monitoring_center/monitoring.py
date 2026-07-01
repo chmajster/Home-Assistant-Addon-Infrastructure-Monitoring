@@ -44,11 +44,17 @@ class MonitorService:
         self.db = db
         self.config = config
         self.ha = ha
+        self._apply_persisted_settings()
         self.running: set[int] = set()
+        self.active_checks: set[int] = set()
+        self.queued_checks: set[int] = set()
+        self._check_semaphore = asyncio.Semaphore(max(int(self.config.max_concurrent_checks), 1))
         self._stop = asyncio.Event()
         self._last_started: dict[int, float] = {}
+        self._last_tick_at: str | None = None
+        self._scheduler_error_count = 0
+        self._last_scheduler_error: str | None = None
         self.started_at = utc_now()
-        self._apply_persisted_settings()
 
     async def scheduler(self) -> None:
         LOGGER.info("Monitoring scheduler started")
@@ -56,7 +62,9 @@ class MonitorService:
             try:
                 await self._tick()
                 await self.cleanup_history()
-            except Exception:
+            except Exception as exc:
+                self._scheduler_error_count += 1
+                self._last_scheduler_error = str(exc)
                 LOGGER.exception("Scheduler tick failed")
             await asyncio.sleep(5)
 
@@ -64,6 +72,7 @@ class MonitorService:
         self._stop.set()
 
     async def _tick(self) -> None:
+        self._last_tick_at = utc_now()
         now = time.monotonic()
         monitors = self.list_monitors(enabled_only=True)
         for monitor in monitors:
@@ -191,7 +200,8 @@ class MonitorService:
             """
             UPDATE monitors
             SET type = ?, name = ?, target = ?, interval_seconds = ?, group_id = ?, enabled = ?,
-                config_json = ?, updated_at = datetime('now')
+                config_json = ?, failure_count = 0, recovery_count = 0, last_raw_status = NULL,
+                updated_at = datetime('now')
             WHERE id = ?
             """,
             (
@@ -250,108 +260,147 @@ class MonitorService:
         if monitor_id in self.running:
             return self.get_monitor(monitor_id)
         self.running.add(monitor_id)
+        self.queued_checks.add(monitor_id)
         try:
-            monitor = self.get_monitor(monitor_id)
-            previous_status = monitor["status"]
-            result = await self._check(monitor)
-            now = utc_now()
-            changed = previous_status != result.status
-            content_changed = result.content_changed
-            last_changed_at = now if changed or content_changed else monitor.get("last_changed_at")
-            details = result.details or {}
-
-            self.db.execute(
-                """
-                UPDATE monitors
-                SET status = ?, last_response_ms = ?, last_http_status = ?, last_error = ?,
-                    last_content_hash = COALESCE(?, last_content_hash),
-                    last_checked_at = ?, last_changed_at = ?, updated_at = datetime('now')
-                WHERE id = ?
-                """,
-                (
-                    result.status,
-                    result.response_ms,
-                    result.http_status,
-                    result.error,
-                    result.content_hash,
-                    now,
-                    last_changed_at,
-                    monitor_id,
-                ),
-            )
-            self._persist_runtime_details(monitor, details)
-            if details.get("stop_checks"):
-                self.db.execute(
-                    "UPDATE monitors SET enabled = 0, updated_at = datetime('now') WHERE id = ?",
-                    (monitor_id,),
-                )
-                self._last_started.pop(monitor_id, None)
-            self.db.execute(
-                """
-                INSERT INTO monitor_checks(
-                    monitor_id, checked_at, status, response_ms, http_status, packet_loss,
-                    error, previous_status, new_status, content_changed, content_hash, details_json
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    monitor_id,
-                    now,
-                    result.status,
-                    result.response_ms,
-                    result.http_status,
-                    result.packet_loss,
-                    result.error,
-                    previous_status,
-                    result.status,
-                    int(result.content_changed),
-                    result.content_hash,
-                    dumps_json(
-                        {
-                            "monitor_id": monitor_id,
-                            "monitor_type": monitor["type"],
-                            "status": result.status,
-                            "response_time_ms": result.response_ms,
-                            "checked_at": now,
-                            "error_message": result.error,
-                            **details,
-                        }
-                    ),
-                ),
-            )
-
-            should_store_snapshot = (
-                monitor["type"] == "http_hash"
-                and bool(result.normalized_content)
-                and bool(result.content_hash)
-                and (content_changed or not monitor.get("last_content_hash"))
-            )
-            if should_store_snapshot:
-                self._store_snapshot(monitor, result)
-
-            updated = self.get_monitor(monitor_id)
-            updated["change_count"] = self._change_count(monitor_id)
-            updated["last_details"] = details
-            await self.ha.publish_monitor_state(updated)
-            if not self._is_maintenance_active(updated):
-                if changed:
-                    await self._record_event("monitor_status_changed", updated, previous_status, result.status, details)
-                    await self._record_event(
-                        "monitor_online" if is_success_status(result.status) else "monitor_offline",
-                        updated,
-                        previous_status,
-                        result.status,
-                        details,
-                    )
-                for event_type in result.events:
-                    await self._record_event(event_type, updated, previous_status, result.status, details)
-                if monitor["type"] == "http_hash" and content_changed:
-                    await self._record_event("website_changed", updated, previous_status, result.status, details)
-                if monitor["type"] in {"http_status", "http_hash"} and result.error:
-                    await self._record_event("website_error", updated, previous_status, result.status, details)
-            return updated
+            async with self._check_semaphore:
+                self.queued_checks.discard(monitor_id)
+                self.active_checks.add(monitor_id)
+                try:
+                    return await self._run_check_now(monitor_id)
+                finally:
+                    self.active_checks.discard(monitor_id)
         finally:
+            self.queued_checks.discard(monitor_id)
             self.running.discard(monitor_id)
+
+    async def _run_check_now(self, monitor_id: int) -> dict[str, Any]:
+        monitor = self.get_monitor(monitor_id)
+        previous_status = monitor["status"]
+        result = await self._check(monitor)
+        final_status, failure_count, recovery_count, threshold_pending = self._status_after_thresholds(
+            monitor,
+            result.status,
+        )
+        now = utc_now()
+        changed = previous_status != final_status
+        content_changed = result.content_changed
+        last_changed_at = now if changed or content_changed else monitor.get("last_changed_at")
+        details = {
+            **(result.details or {}),
+            "raw_status": result.status,
+            "effective_status": final_status,
+            "failure_count": failure_count,
+            "recovery_count": recovery_count,
+            "failure_threshold": self._monitor_int_setting(
+                monitor,
+                "failure_threshold",
+                self.config.failure_threshold,
+                1,
+            ),
+            "recovery_threshold": self._monitor_int_setting(
+                monitor,
+                "recovery_threshold",
+                self.config.recovery_threshold,
+                1,
+            ),
+        }
+
+        self.db.execute(
+            """
+            UPDATE monitors
+            SET status = ?, last_response_ms = ?, last_http_status = ?, last_error = ?,
+                last_content_hash = COALESCE(?, last_content_hash),
+                last_checked_at = ?, last_changed_at = ?, failure_count = ?, recovery_count = ?,
+                last_raw_status = ?, updated_at = datetime('now')
+            WHERE id = ?
+            """,
+            (
+                final_status,
+                result.response_ms,
+                result.http_status,
+                result.error,
+                result.content_hash,
+                now,
+                last_changed_at,
+                failure_count,
+                recovery_count,
+                result.status,
+                monitor_id,
+            ),
+        )
+        self._persist_runtime_details(monitor, details)
+        if details.get("stop_checks"):
+            self.db.execute(
+                "UPDATE monitors SET enabled = 0, updated_at = datetime('now') WHERE id = ?",
+                (monitor_id,),
+            )
+            self._last_started.pop(monitor_id, None)
+        elif threshold_pending:
+            self._schedule_retry(monitor, details)
+        self.db.execute(
+            """
+            INSERT INTO monitor_checks(
+                monitor_id, checked_at, status, response_ms, http_status, packet_loss,
+                error, previous_status, new_status, content_changed, content_hash, details_json
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                monitor_id,
+                now,
+                final_status,
+                result.response_ms,
+                result.http_status,
+                result.packet_loss,
+                result.error,
+                previous_status,
+                final_status,
+                int(result.content_changed),
+                result.content_hash,
+                dumps_json(
+                    {
+                        "monitor_id": monitor_id,
+                        "monitor_type": monitor["type"],
+                        "status": final_status,
+                        "response_time_ms": result.response_ms,
+                        "checked_at": now,
+                        "error_message": result.error,
+                        **details,
+                    }
+                ),
+            ),
+        )
+
+        should_store_snapshot = (
+            monitor["type"] == "http_hash"
+            and bool(result.normalized_content)
+            and bool(result.content_hash)
+            and (content_changed or not monitor.get("last_content_hash"))
+        )
+        if should_store_snapshot:
+            self._store_snapshot(monitor, result)
+
+        updated = self.get_monitor(monitor_id)
+        updated["change_count"] = self._change_count(monitor_id)
+        updated["last_details"] = details
+        await self.ha.publish_monitor_state(updated)
+        if not self._is_maintenance_active(updated):
+            if changed:
+                await self._record_event("monitor_status_changed", updated, previous_status, final_status, details)
+                await self._record_event(
+                    "monitor_online" if is_success_status(final_status) else "monitor_offline",
+                    updated,
+                    previous_status,
+                    final_status,
+                    details,
+                )
+            for event_type in result.events:
+                await self._record_event(event_type, updated, previous_status, final_status, details)
+            if monitor["type"] == "http_hash" and content_changed:
+                await self._record_event("website_changed", updated, previous_status, final_status, details)
+            if monitor["type"] in {"http_status", "http_hash"} and result.error:
+                await self._record_event("website_error", updated, previous_status, final_status, details)
+        return updated
 
     async def _check(self, monitor: dict[str, Any]) -> CheckResult:
         try:
@@ -364,6 +413,44 @@ class MonitorService:
             return CheckResult("error", error=f"Unsupported monitor type: {monitor['type']}")
         except Exception as exc:
             return CheckResult("error", error=str(exc))
+
+    def _status_after_thresholds(self, monitor: dict[str, Any], raw_status: str) -> tuple[str, int, int, bool]:
+        previous_status = str(monitor.get("status") or "unknown")
+        previous_success = is_success_status(previous_status)
+        raw_success = is_success_status(raw_status)
+        failure_threshold = self._monitor_int_setting(monitor, "failure_threshold", self.config.failure_threshold, 1)
+        recovery_threshold = self._monitor_int_setting(monitor, "recovery_threshold", self.config.recovery_threshold, 1)
+        failure_count = int(monitor.get("failure_count") or 0)
+        recovery_count = int(monitor.get("recovery_count") or 0)
+
+        if raw_success:
+            failure_count = 0
+            if previous_success or previous_status == "unknown":
+                return raw_status, failure_count, 0, False
+            recovery_count += 1
+            if recovery_count >= recovery_threshold:
+                return raw_status, failure_count, 0, False
+            return previous_status, failure_count, recovery_count, True
+
+        recovery_count = 0
+        if previous_success or previous_status == "unknown":
+            failure_count += 1
+            if failure_count >= failure_threshold:
+                return raw_status, 0, recovery_count, False
+            return previous_status, failure_count, recovery_count, True
+        return raw_status, 0, recovery_count, False
+
+    def _schedule_retry(self, monitor: dict[str, Any], details: dict[str, Any]) -> None:
+        retry_delay = self._monitor_int_setting(monitor, "retry_delay_seconds", self.config.retry_delay_seconds, 0)
+        if retry_delay <= 0:
+            return
+        interval = max(int(monitor.get("interval_seconds") or retry_delay), 1)
+        self._last_started[int(monitor["id"])] = time.monotonic() - max(interval - retry_delay, 0)
+        details["retry_delay_seconds"] = retry_delay
+
+    def _monitor_int_setting(self, monitor: dict[str, Any], key: str, default: int, minimum: int) -> int:
+        config = monitor.get("config") or {}
+        return _safe_int(config.get(key), default, minimum)
 
     def _store_snapshot(self, monitor: dict[str, Any], result: CheckResult) -> None:
         previous = self.db.fetchone(
@@ -524,6 +611,10 @@ class MonitorService:
             "retention_days": self.config.retention_days,
             "default_interval_seconds": self.config.default_interval_seconds,
             "default_timeout_minutes": self.config.default_timeout_minutes,
+            "max_concurrent_checks": self.config.max_concurrent_checks,
+            "failure_threshold": self.config.failure_threshold,
+            "recovery_threshold": self.config.recovery_threshold,
+            "retry_delay_seconds": self.config.retry_delay_seconds,
             "max_page_size_mb": self.config.max_page_size_mb,
             "block_private_networks": self.config.block_private_networks,
             "publish_home_assistant_entities": self.config.publish_home_assistant_entities,
@@ -577,7 +668,11 @@ class MonitorService:
 
     def clear_monitor_maintenance(self, monitor_id: int) -> dict[str, Any]:
         self.db.execute(
-            "UPDATE monitors SET maintenance_until = NULL, maintenance_reason = NULL, updated_at = datetime('now') WHERE id = ?",
+            """
+            UPDATE monitors
+            SET maintenance_until = NULL, maintenance_reason = NULL, updated_at = datetime('now')
+            WHERE id = ?
+            """,
             (monitor_id,),
         )
         return self.get_monitor(monitor_id)
@@ -596,7 +691,11 @@ class MonitorService:
 
     def clear_group_maintenance(self, group_id: int) -> dict[str, Any]:
         self.db.execute(
-            "UPDATE monitor_groups SET maintenance_until = NULL, maintenance_reason = NULL, updated_at = datetime('now') WHERE id = ?",
+            """
+            UPDATE monitor_groups
+            SET maintenance_until = NULL, maintenance_reason = NULL, updated_at = datetime('now')
+            WHERE id = ?
+            """,
             (group_id,),
         )
         return self.get_group(group_id)
@@ -672,6 +771,13 @@ class MonitorService:
             "schema_version": int(schema["version"] or 0) if schema else 0,
             **db_stats,
             "last_check": last_check["checked_at"] if last_check else None,
+            "scheduler_last_tick": self._last_tick_at,
+            "scheduler_error_count": self._scheduler_error_count,
+            "scheduler_last_error": self._last_scheduler_error,
+            "max_concurrent_checks": self.config.max_concurrent_checks,
+            "active_jobs": sorted(self.active_checks),
+            "queued_jobs": sorted(self.queued_checks),
+            "queued_job_count": len(self.queued_checks),
             "running_jobs": sorted(self.running),
             "intervals": {m["id"]: m["interval_seconds"] for m in self.list_monitors()},
             "errors": errors,
@@ -755,9 +861,13 @@ class MonitorService:
     @staticmethod
     def _hydrate_monitor(row: dict[str, Any]) -> dict[str, Any]:
         row["enabled"] = bool(row["enabled"])
+        row["failure_count"] = int(row.get("failure_count") or 0)
+        row["recovery_count"] = int(row.get("recovery_count") or 0)
         row["type"] = resolve_type(row["type"])
         row["config"] = loads_json(row.pop("config_json", None), {})
-        row["maintenance_active"] = _is_future(row.get("maintenance_until")) or _is_future(row.get("group_maintenance_until"))
+        row["maintenance_active"] = _is_future(row.get("maintenance_until")) or _is_future(
+            row.get("group_maintenance_until")
+        )
         return row
 
     def _hydrate_group(self, row: dict[str, Any], monitors: list[dict[str, Any]]) -> dict[str, Any]:
@@ -841,3 +951,11 @@ def _safe_float(value: object, default: float) -> float:
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+def _safe_int(value: object, default: int, minimum: int = 1) -> int:
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        number = default
+    return max(number, minimum)
