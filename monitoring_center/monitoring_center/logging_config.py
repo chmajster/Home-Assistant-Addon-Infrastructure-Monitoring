@@ -5,7 +5,6 @@ import sys
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-
 LEVELS = {
     "trace": logging.DEBUG,
     "debug": logging.DEBUG,

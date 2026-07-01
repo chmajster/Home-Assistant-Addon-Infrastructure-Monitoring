@@ -53,9 +53,9 @@ def _resolve(domain: str, record_type: str) -> list[str]:
 
         answers = dns.resolver.resolve(domain, record_type)
         return sorted(str(answer).strip('"') for answer in answers)
-    except ImportError:
+    except ImportError as exc:
         if record_type not in {"A", "AAAA"}:
-            raise RuntimeError("dnspython is required for this DNS record type")
+            raise RuntimeError("dnspython is required for this DNS record type") from exc
         import socket
 
         family = socket.AF_INET6 if record_type == "AAAA" else socket.AF_INET

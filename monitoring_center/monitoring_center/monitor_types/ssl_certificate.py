@@ -4,7 +4,7 @@ import asyncio
 import socket
 import ssl
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlparse
 
@@ -36,8 +36,8 @@ class SslCertificateMonitor:
             started = time.perf_counter()
             cert = await asyncio.wait_for(asyncio.to_thread(_fetch_cert, host, port, timeout), timeout=timeout + 1)
             elapsed_ms = (time.perf_counter() - started) * 1000
-            expires_at = datetime.strptime(cert["notAfter"], "%b %d %H:%M:%S %Y %Z").replace(tzinfo=timezone.utc)
-            days_left = (expires_at - datetime.now(timezone.utc)).days
+            expires_at = datetime.strptime(cert["notAfter"], "%b %d %H:%M:%S %Y %Z").replace(tzinfo=UTC)
+            days_left = (expires_at - datetime.now(UTC)).days
             status = "ok"
             events: list[str] = []
             if days_left <= error_days:

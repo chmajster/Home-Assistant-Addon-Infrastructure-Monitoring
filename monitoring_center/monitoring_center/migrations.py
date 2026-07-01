@@ -4,7 +4,6 @@ import shutil
 
 from .database import Database, dumps_json, loads_json
 
-
 SCHEMA_VERSION = 9
 
 

@@ -7,7 +7,6 @@ from urllib.parse import urlparse, urlunparse
 
 from fastapi import HTTPException
 
-
 HOSTNAME_RE = re.compile(
     r"^(?=.{1,253}$)(?!-)[A-Za-z0-9-]{1,63}(?<!-)"
     r"(\.(?!-)[A-Za-z0-9-]{1,63}(?<!-))*\.?$"
@@ -36,7 +35,7 @@ def validate_url(target: str) -> str:
     if not parsed.hostname:
         raise HTTPException(status_code=422, detail="URL hostname is required")
     try:
-        parsed.port
+        _ = parsed.port
     except ValueError as exc:
         raise HTTPException(status_code=422, detail="URL port is invalid") from exc
     return value

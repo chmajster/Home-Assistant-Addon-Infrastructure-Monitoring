@@ -42,7 +42,7 @@ class TcpPortMonitor:
                 details={"host": host, "port": port, "timeout_seconds": timeout},
                 events=["tcp_port_open"],
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             elapsed_ms = (time.perf_counter() - started) * 1000
             return CheckResult(
                 "timeout",

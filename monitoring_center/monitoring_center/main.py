@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import os
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
-from typing import Any, AsyncIterator
+from typing import Any
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, Query

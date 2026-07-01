@@ -12,7 +12,6 @@ from .rest_api import RestApiMonitor
 from .ssl_certificate import SslCertificateMonitor
 from .tcp import TcpPortMonitor
 
-
 PLUGINS: dict[str, MonitorTypePlugin] = {
     plugin.type: plugin
     for plugin in [

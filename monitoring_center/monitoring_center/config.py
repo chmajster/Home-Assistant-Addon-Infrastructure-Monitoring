@@ -6,7 +6,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-
 DEFAULT_OPTIONS: dict[str, Any] = {
     "log_level": "info",
     "database_path": "/data/monitoring_center.db",
@@ -50,7 +49,7 @@ class AppConfig:
     options_path: Path
 
     @classmethod
-    def load(cls) -> "AppConfig":
+    def load(cls) -> AppConfig:
         options_path = Path(os.environ.get("MONITORING_CENTER_OPTIONS", "/data/options.json"))
         data = DEFAULT_OPTIONS.copy()
         loaded: dict[str, Any] = {}
@@ -66,9 +65,7 @@ class AppConfig:
             data["default_timeout_minutes"] = max(_safe_float(timeout_seconds, 300) / 60, 1 / 60)
         if "default_interval_seconds" not in loaded:
             legacy_interval = data.get("default_website_interval", data.get("default_device_interval", 300))
-            data["default_interval_seconds"] = int(
-                max(_safe_float(legacy_interval, 300), 5)
-            )
+            data["default_interval_seconds"] = int(max(_safe_float(legacy_interval, 300), 5))
         if "max_page_size_mb" not in loaded:
             data["max_page_size_mb"] = max(_safe_float(data.get("max_page_size_kb", 512), 512) / 1024, 1 / 1024)
 

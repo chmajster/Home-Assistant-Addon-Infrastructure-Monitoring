@@ -45,17 +45,10 @@ class MqttMonitor:
                 details["last_topic_payload"] = message[:1000]
                 details["topic_received"] = True
             return CheckResult("ok", response_ms=elapsed_ms, details=details)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return CheckResult(
                 "timeout",
                 error=f"MQTT broker {host}:{port} timed out",
-                details={"host": host, "port": port, "topic": topic or None},
-                events=["mqtt_monitor_timeout"],
-            )
-        except TimeoutError as exc:
-            return CheckResult(
-                "timeout",
-                error=str(exc),
                 details={"host": host, "port": port, "topic": topic or None},
                 events=["mqtt_monitor_timeout"],
             )

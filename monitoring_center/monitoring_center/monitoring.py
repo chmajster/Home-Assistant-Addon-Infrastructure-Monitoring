@@ -5,7 +5,7 @@ import difflib
 import logging
 import sys
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from fastapi import HTTPException
@@ -23,7 +23,7 @@ URL_MONITOR_TYPES = {"http_status", "http_hash", "rest_api"}
 
 
 def utc_now() -> str:
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+    return datetime.now(UTC).replace(microsecond=0).isoformat()
 
 
 def parse_time(value: str | None) -> datetime | None:
@@ -35,8 +35,8 @@ def parse_time(value: str | None) -> datetime | None:
     except ValueError:
         return None
     if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc)
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
 
 
 class MonitorService:
@@ -657,14 +657,14 @@ class MonitorService:
     @staticmethod
     def _incident_duration_seconds(started_at: str | None, ended_at: str | None = None) -> int:
         started = parse_time(started_at)
-        ended = parse_time(ended_at) or datetime.now(timezone.utc)
+        ended = parse_time(ended_at) or datetime.now(UTC)
         if not started:
             return 0
         return max(0, int((ended - started).total_seconds()))
 
     async def cleanup_history(self) -> None:
         retention = int(self.get_settings().get("retention_days", self.config.retention_days))
-        cutoff = (datetime.now(timezone.utc) - timedelta(days=retention)).replace(microsecond=0).isoformat()
+        cutoff = (datetime.now(UTC) - timedelta(days=retention)).replace(microsecond=0).isoformat()
         self.db.execute("DELETE FROM monitor_checks WHERE checked_at < ?", (cutoff,))
         self.db.execute("DELETE FROM events WHERE created_at < ?", (cutoff,))
         self.db.execute("DELETE FROM website_snapshots WHERE created_at < ?", (cutoff,))
@@ -1097,7 +1097,7 @@ class MonitorService:
         db_stats = self.db.diagnostics()
         started = parse_time(self.started_at)
         last_tick = parse_time(self._last_tick_at)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         errors = self.db.fetchall(
             """
             SELECT checked_at, monitor_id, error
@@ -1242,7 +1242,7 @@ class MonitorService:
         return row
 
     def _slo_for_window(self, days: int, group_id: int | None = None, monitor_id: int | None = None) -> dict[str, Any]:
-        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).replace(microsecond=0).isoformat()
+        cutoff = (datetime.now(UTC) - timedelta(days=days)).replace(microsecond=0).isoformat()
         clauses = ["c.checked_at >= ?"]
         params: list[Any] = [cutoff]
         if group_id is not None:
@@ -1286,7 +1286,7 @@ class MonitorService:
         minutes = payload.get("duration_minutes")
         if minutes is None:
             return "9999-12-31T23:59:59+00:00"
-        return (datetime.now(timezone.utc) + timedelta(minutes=int(minutes))).replace(microsecond=0).isoformat()
+        return (datetime.now(UTC) + timedelta(minutes=int(minutes))).replace(microsecond=0).isoformat()
 
     def _is_maintenance_active(self, monitor: dict[str, Any]) -> bool:
         return _is_future(monitor.get("maintenance_until")) or _is_future(monitor.get("group_maintenance_until"))
@@ -1294,7 +1294,7 @@ class MonitorService:
 
 def _is_future(value: str | None) -> bool:
     parsed = parse_time(value)
-    return bool(parsed and parsed > datetime.now(timezone.utc))
+    return bool(parsed and parsed > datetime.now(UTC))
 
 
 def _safe_float(value: object, default: float) -> float:
