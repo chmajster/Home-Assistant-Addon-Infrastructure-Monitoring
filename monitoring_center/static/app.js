@@ -79,6 +79,7 @@ function bindNavigation() {
 
 function bindForms() {
   $("#monitorForm").addEventListener("submit", saveMonitor);
+  $("#cancelMonitorBtn").addEventListener("click", () => $("#monitorDialog").close());
   $("#testMonitorBtn").addEventListener("click", testMonitorFromForm);
   $("#groupForm").addEventListener("submit", saveGroup);
   $("#monitorTypeSelect").addEventListener("change", () => renderTypeFields($("#monitorTypeSelect").value));
@@ -1204,7 +1205,7 @@ function openMonitorForm(monitor) {
   form.elements.name.value = monitor.name || "";
   form.elements.target.value = monitor.target || "";
   form.elements.group_id.value = monitor.group_id || "";
-  form.elements.interval_seconds.value = monitor.interval_seconds || "";
+  form.elements.interval_seconds.value = getMonitorFormInterval(monitor);
   form.elements.enabled.checked = monitor.enabled !== false;
   form.elements.test_on_save.checked = !monitor.id;
   form.elements.expected_status_codes.value = (monitor.config?.expected_status_codes || []).join(",");
@@ -1229,6 +1230,18 @@ function openMonitorForm(monitor) {
   $("#dialogTitle").textContent = monitor.id ? "Edytuj monitor" : "Dodaj monitor";
   renderTypeFields(form.elements.type.value);
   $("#monitorDialog").showModal();
+}
+
+function getMonitorFormInterval(monitor) {
+  if (monitor.interval_seconds !== undefined && monitor.interval_seconds !== null && monitor.interval_seconds !== "") {
+    return monitor.interval_seconds;
+  }
+  return monitor.id ? "" : getDefaultMonitorIntervalSeconds();
+}
+
+function getDefaultMonitorIntervalSeconds() {
+  const value = Number(state.settings?.default_interval_seconds);
+  return Number.isFinite(value) && value >= 5 ? value : 300;
 }
 
 async function saveMonitor(event) {
