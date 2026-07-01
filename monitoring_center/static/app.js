@@ -1113,7 +1113,12 @@ async function handleBulkAction(event) {
     toast("Zaznacz przynajmniej jeden monitor.", "error");
     return;
   }
-  if (action === "delete" && !confirm(`Usunąć ${ids.length} monitorów?`)) return;
+  if (action === "delete") {
+    const monitorsToDelete = ids
+      .map((id) => state.monitors.find((item) => item.id === id))
+      .filter(Boolean);
+    if (!await confirmBulkDelete(monitorsToDelete)) return;
+  }
   await runWithButtonLoading(event.currentTarget, async () => {
     for (const id of ids) {
       const monitor = state.monitors.find((item) => item.id === id);
@@ -1129,6 +1134,49 @@ async function handleBulkAction(event) {
   state.selectedMonitorIds.clear();
   toast("Wykonano akcję masową.");
   refreshAll();
+}
+
+function confirmBulkDelete(monitors) {
+  if (!monitors.length) return Promise.resolve(false);
+  const dialog = $("#confirmDialog");
+  if (!dialog?.showModal) {
+    return Promise.resolve(confirm(`Usunąć ${monitors.length} monitorów?\n\n${monitors.map((monitor) => `- ${monitor.name}`).join("\n")}`));
+  }
+  $("#confirmTitle").textContent = `Usunąć ${monitors.length} ${pluralizeMonitors(monitors.length)}?`;
+  $("#confirmText").textContent = "Ta akcja trwale usunie poniższe monitory wraz z ich konfiguracją. Sprawdź listę przed potwierdzeniem.";
+  $("#confirmAcceptBtn").textContent = monitors.length === 1 ? "Usuń monitor" : "Usuń monitory";
+  const details = $("#confirmDetails");
+  details.classList.remove("hidden");
+  details.innerHTML = `
+    <div class="delete-list-head">
+      <span>Do usunięcia</span>
+      <strong>${monitors.length}</strong>
+    </div>
+    <ul class="delete-list">
+      ${monitors.map((monitor) => `
+        <li>
+          <strong>${escapeHtml(monitor.name)}</strong>
+          <span>${escapeHtml(typeLabel(monitor.type))} · ${escapeHtml(monitor.target || "-")}</span>
+        </li>
+      `).join("")}
+    </ul>
+  `;
+  dialog.returnValue = "";
+  return new Promise((resolve) => {
+    dialog.addEventListener("close", () => {
+      resolve(dialog.returnValue === "confirm");
+    }, { once: true });
+    dialog.showModal();
+  });
+}
+
+function pluralizeMonitors(count) {
+  if (count === 1) return "monitor";
+  const lastTwo = count % 100;
+  const last = count % 10;
+  if (lastTwo >= 12 && lastTwo <= 14) return "monitorów";
+  if (last >= 2 && last <= 4) return "monitory";
+  return "monitorów";
 }
 
 async function handleCardAction(event) {
@@ -1398,40 +1446,62 @@ function renderMonitorDetailsShell(id) {
   $$("[data-action]", $("#detailExtraActions")).forEach((button) => button.addEventListener("click", handleCardAction));
   $("#detailSnapshotsSection").classList.toggle("hidden", monitor.type !== "http_hash");
   $("#detailMetrics").innerHTML = [
-    ["Status", `<span class="badge ${badgeClass(monitor.status)}">${escapeHtml(monitor.status)}</span>`],
-    ["Odpowiedź", monitor.last_response_ms ? `${Number(monitor.last_response_ms).toFixed(1)} ms` : "-"],
-    ["HTTP", monitor.last_http_status || "-"],
-    ["Ostatni test", formatDate(monitor.last_checked_at)],
-    ["Ostatnia zmiana", formatDate(monitor.last_changed_at)],
-    ...(monitor.type === "http_hash" ? [["Suma WWW", hashHtml(monitor.last_content_hash)]] : []),
-  ].map(([label, value]) => `<article><span>${value}</span><small>${label}</small></article>`).join("");
-  const detailData = {
-    "Nazwa": monitor.name,
-    "Cel": monitor.target,
-    "Typ": typeLabel(monitor.type),
-    "Grupa": monitor.group_name || "Bez grupy",
-    "Interwał": `${monitor.interval_seconds}s`,
-    "Aktywny": monitor.enabled ? "tak" : "nie",
-    "Maintenance": monitor.maintenance_active ? `aktywny do ${formatDate(monitor.maintenance_until || monitor.group_maintenance_until)}` : "-",
-    ...(monitor.type === "http_hash" ? {
-      "Data sprawdzenia WWW": formatDate(monitor.last_checked_at),
-      "Suma kontrolna WWW": monitor.last_content_hash || "-",
-    } : {}),
-    "Błąd": monitor.last_error || "-",
-    "Konfiguracja": JSON.stringify(monitor.config || {}, null, 2),
-  };
-  $("#detailData").innerHTML = Object.entries(detailData)
-    .map(([key, value]) => `<dt>${key}</dt><dd>${escapeHtml(String(value ?? "-"))}</dd>`)
+    { label: "Status", value: `<span class="detail-status-badge ${badgeClass(monitor.status)}">${escapeHtml(monitor.status || "-")}</span>` },
+    { label: "Odpowiedź", value: monitor.last_response_ms ? `${Number(monitor.last_response_ms).toFixed(1)} ms` : "-", empty: !monitor.last_response_ms },
+    { label: "HTTP", value: monitor.last_http_status || "-", empty: !monitor.last_http_status },
+    { label: "Ostatni test", value: renderDetailDate(monitor.last_checked_at), empty: !monitor.last_checked_at },
+    { label: "Ostatnia zmiana", value: renderDetailDate(monitor.last_changed_at), empty: !monitor.last_changed_at },
+    ...(monitor.type === "http_hash" ? [{ label: "Suma WWW", value: hashHtml(monitor.last_content_hash), empty: !monitor.last_content_hash }] : []),
+  ].map((metric) => `
+    <article class="detail-metric-card">
+      <div class="detail-metric-value ${metric.empty ? "is-empty" : ""}">${metric.value}</div>
+      <small>${escapeHtml(metric.label)}</small>
+    </article>
+  `).join("");
+  const detailData = [
+    ["Nazwa", monitor.name],
+    ["Cel", monitor.target],
+    ["Typ", typeLabel(monitor.type)],
+    ["Grupa", monitor.group_name || "Bez grupy"],
+    ["Interwał", `${monitor.interval_seconds}s`],
+    ["Aktywny", monitor.enabled ? "tak" : "nie"],
+    ["Maintenance", monitor.maintenance_active ? `aktywny do ${formatDate(monitor.maintenance_until || monitor.group_maintenance_until)}` : "-"],
+    ...(monitor.type === "http_hash" ? [
+      ["Data sprawdzenia WWW", formatDate(monitor.last_checked_at)],
+      ["Suma kontrolna WWW", monitor.last_content_hash || "-"],
+    ] : []),
+    ["Błąd", monitor.last_error || "-", monitor.last_error ? "error" : ""],
+    ["Konfiguracja", JSON.stringify(monitor.config || {}, null, 2), "code"],
+  ];
+  $("#detailData").innerHTML = detailData
+    .map(([key, value, variant]) => `<dt>${escapeHtml(key)}</dt><dd>${renderDetailValue(value, variant)}</dd>`)
     .join("");
+}
+
+function renderDetailDate(value) {
+  if (!value) return "-";
+  const formatted = formatDate(value);
+  if (!formatted || formatted === "-") return "-";
+  const parts = formatted.split(",").map((part) => part.trim()).filter(Boolean);
+  if (parts.length < 2) return escapeHtml(formatted);
+  return `<span class="detail-date"><strong>${escapeHtml(parts[0])}</strong><span>${escapeHtml(parts.slice(1).join(", "))}</span></span>`;
+}
+
+function renderDetailValue(value, variant = "") {
+  const text = String(value ?? "-");
+  if (variant === "error" && text !== "-") return `<span class="inline-error">${escapeHtml(text)}</span>`;
+  if (variant === "code") return `<code class="inline-code">${escapeHtml(text)}</code>`;
+  return escapeHtml(text);
 }
 
 function renderDetailSlo(slo) {
   $("#detailSlo").innerHTML = ["24h", "7d", "30d", "90d"].map((key) => {
     const item = slo[key] || {};
-    return `<article class="slo-card">
-      <strong>${key}</strong>
-      <span>${item.uptime_percent ?? "-"}%</span>
-      <small>Śr. ${item.avg_response_ms ? item.avg_response_ms + " ms" : "-"} · Incydenty ${item.incidents ?? 0} · Testy ${item.checks ?? 0}</small>
+    const uptime = item.uptime_percent ?? "-";
+    return `<article class="slo-card detail-slo-card">
+      <strong class="slo-period">${key}</strong>
+      <span class="slo-value">${uptime === "-" ? "-" : `${uptime}%`}</span>
+      <small class="slo-meta">Śr. ${item.avg_response_ms ? item.avg_response_ms + " ms" : "-"} · Incydenty ${item.incidents ?? 0} · Testy ${item.checks ?? 0}</small>
     </article>`;
   }).join("");
 }

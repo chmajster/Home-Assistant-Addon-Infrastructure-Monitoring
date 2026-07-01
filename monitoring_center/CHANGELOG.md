@@ -2,6 +2,28 @@
 
 All notable changes to the **Monitoring Center** Home Assistant add-on are documented here.
 
+## [0.7.4] - 2026-07-02
+
+### Changed
+
+- Refined the monitor details view with a cleaner toolbar, metric cards, details/SLO sections, and responsive layout.
+- Aligned the topbar, controls, and UI variables for light and dark themes.
+- Bumped add-on and application metadata version to `0.7.4`.
+
+## [0.7.3] - 2026-07-02
+
+### Changed
+
+- Refined sidebar geometry with safer line-height, equal item heights, lighter active state, and stable icon/text alignment.
+- Bumped add-on and application metadata version to `0.7.3`.
+
+## [0.7.2] - 2026-07-02
+
+### Changed
+
+- Replaced the native bulk delete confirmation with an in-app popup listing the monitors that will be removed.
+- Bumped add-on and application metadata version to `0.7.2`.
+
 ## [0.7.1] - 2026-07-02
 
 ### Changed

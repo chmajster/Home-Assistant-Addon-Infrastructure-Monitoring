@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Monitoring Center</title>
-    <link rel="stylesheet" href="static/styles.css?v=0.7.1" />
+    <link rel="stylesheet" href="static/styles.css?v=0.7.4" />
   </head>
   <body>
     <svg class="icon-sprite" aria-hidden="true" focusable="false">
@@ -263,14 +263,16 @@
             </section>
           </section>
 
-          <section id="monitorDetail" class="view">
-            <div class="view-head">
-              <div>
-                <button id="detailBackBtn" type="button">← Wróć</button>
-                <h2 id="detailTitle">Monitor</h2>
-                <p id="detailSubtitle"></p>
+          <section id="monitorDetail" class="view monitor-detail-view">
+            <div class="view-head monitor-detail-head">
+              <div class="monitor-detail-title">
+                <button id="detailBackBtn" class="secondary-action" type="button">← Wróć</button>
+                <div>
+                  <h2 id="detailTitle">Monitor</h2>
+                  <p id="detailSubtitle"></p>
+                </div>
               </div>
-              <div class="actions compact-actions">
+              <div class="detail-actions">
                 <label class="detail-search">Wyszukaj monitoring<input id="detailMonitorSearch" list="detailMonitorOptions" placeholder="Nazwa, host, URL" /></label>
                 <datalist id="detailMonitorOptions"></datalist>
                 <button id="detailEditBtn" type="button">Edytuj</button>
@@ -278,15 +280,15 @@
                 <div id="detailExtraActions" class="actions compact-actions"></div>
               </div>
             </div>
-            <div id="detailMetrics" class="metrics detail-metrics"></div>
-            <div class="split">
-              <section class="panel">
+            <div id="detailMetrics" class="detail-metrics"></div>
+            <div class="detail-content-grid">
+              <section class="panel detail-panel">
                 <h3>Szczegóły</h3>
-                <dl id="detailData" class="diagnostics"></dl>
+                <dl id="detailData" class="detail-list"></dl>
               </section>
-              <section class="panel">
+              <section class="panel detail-panel">
                 <h3>SLO / Uptime</h3>
-                <div id="detailSlo" class="slo-grid"></div>
+                <div id="detailSlo" class="detail-slo-grid"></div>
               </section>
             </div>
             <section class="panel table-wrap">
@@ -622,18 +624,19 @@
       </form>
     </dialog>
 
-    <dialog id="confirmDialog">
+    <dialog id="confirmDialog" class="confirm-dialog">
       <form method="dialog">
         <h2 id="confirmTitle">Potwierdzenie</h2>
         <p id="confirmText"></p>
+        <div id="confirmDetails" class="confirm-details hidden"></div>
         <menu>
           <button value="cancel">Anuluj</button>
-          <button id="confirmAcceptBtn" value="default" class="primary">Wykonaj</button>
+          <button id="confirmAcceptBtn" value="confirm" class="danger-action">Wykonaj</button>
         </menu>
       </form>
     </dialog>
 
     <div id="toast" role="status" aria-label="Komunikat aplikacji" title="Kliknij, aby zamknąć"></div>
-    <script src="static/app.js?v=0.7.1"></script>
+    <script src="static/app.js?v=0.7.4"></script>
   </body>
 </html>
