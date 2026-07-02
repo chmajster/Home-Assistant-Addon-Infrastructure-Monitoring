@@ -4,12 +4,18 @@ All notable changes to the **Monitoring Center** Home Assistant add-on are docum
 
 ## [Unreleased]
 
+## [0.7.8] - 2026-07-02
+
 ### Added
 
 - Added new monitor types in the existing `monitor_types` plugin system: SSH/Bash, Docker, Linux host, disk, backup, HA health, Pi-hole, UniFi/SNMP, log regex, and file/directory monitors.
 - Added shared alert fields for severity, cooldown, recovery notifications, repeats, deduplication, and alert channels.
 - Added alert events `monitor_alert`, `monitor_alert_recovered`, `monitor_alert_suppressed`, `monitor_alert_repeated`, plus severity filtering in history.
 - Added secret masking for API responses, history, and events, with empty secret fields preserving previous values on monitor edit.
+
+### Changed
+
+- Bumped add-on and application metadata version to `0.7.8`.
 
 ## [0.7.7] - 2026-07-02
 
