@@ -119,3 +119,43 @@
         message: >
           {{ trigger.event.data.monitor_name }} ma stan
           {{ trigger.event.data.details.state }}.
+
+- alias: Monitoring Center - alert krytyczny
+  mode: queued
+  trigger:
+    - platform: event
+      event_type: monitor_alert
+  condition:
+    - condition: template
+      value_template: "{{ trigger.event.data.severity == 'critical' }}"
+  action:
+    - service: persistent_notification.create
+      data:
+        title: "Monitoring Center critical"
+        message: >
+          {{ trigger.event.data.monitor_name }} ma status {{ trigger.event.data.new_state }}.
+          Szczegoly: {{ trigger.event.data.details.error_message | default('brak') }}
+
+- alias: Monitoring Center - SSH command error
+  mode: queued
+  trigger:
+    - platform: event
+      event_type: ssh_command_error
+  action:
+    - service: persistent_notification.create
+      data:
+        title: "SSH / Bash monitor"
+        message: >
+          {{ trigger.event.data.monitor_name }} exit code:
+          {{ trigger.event.data.details.exit_code | default('n/a') }}
+
+- alias: Monitoring Center - backup missing
+  mode: queued
+  trigger:
+    - platform: event
+      event_type: backup_missing
+  action:
+    - service: persistent_notification.create
+      data:
+        title: "Backup missing"
+        message: "{{ trigger.event.data.monitor_name }} nie znalazl aktualnego backupu."

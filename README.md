@@ -12,4 +12,8 @@ Szybki start:
 
 Pełna dokumentacja: [monitoring_center/README.md](monitoring_center/README.md).
 
+Nowe typy monitorow sa dodawane w istniejacym widoku **Monitoring** jako pluginy `monitor_types`.
+Obejmuja m.in. SSH/Bash, Docker, Linux host health, dyski, backupy, Home Assistant health, Pi-hole,
+UniFi/SNMP, log regex oraz pliki/katalogi. Nie sa tworzone osobne glowne sekcje dla SSH, Docker ani Backup.
+
 Historia zmian: [CHANGELOG.md](CHANGELOG.md).

@@ -4,6 +4,15 @@ Wszystkie istotne zmiany w projekcie **Home Assistant Monitoring / Monitoring Ce
 
 Format opiera się na konwencji Keep a Changelog, a wersjonowanie dodatku powinno podążać za SemVer tam, gdzie ma to zastosowanie.
 
+## [Unreleased]
+
+### Added
+
+- Dodano nowe typy monitorow w istniejacym systemie `monitor_types`: SSH/Bash, Docker, Linux host, dyski, backupy, HA health, Pi-hole, UniFi/SNMP, log regex oraz pliki/katalogi.
+- Dodano wspolne pola alertow: `severity`, `cooldown_minutes`, `notify_on_recovery`, `repeat_every_minutes`, `max_repeats`, `deduplicate_alerts`, `alert_channels`.
+- Dodano eventy alertowe `monitor_alert`, `monitor_alert_recovered`, `monitor_alert_suppressed`, `monitor_alert_repeated` oraz filtr severity w historii.
+- Dodano maskowanie sekretow w API, historii i eventach oraz zachowanie poprzedniego sekretu przy pustym polu w edycji monitora.
+
 ## [0.7.7] - 2026-07-02
 
 ### Changed

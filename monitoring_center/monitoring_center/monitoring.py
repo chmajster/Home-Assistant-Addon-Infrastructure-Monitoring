@@ -16,6 +16,7 @@ from .database import Database, dumps_json, loads_json
 from .ha import HomeAssistantClient
 from .monitor_types import PRESETS, get_plugin, list_types, resolve_type
 from .monitor_types.base import CheckResult, MonitorContext, is_success_status
+from .security import preserve_existing_secrets, sanitize_secrets
 from .validators import normalize_url_key
 
 LOGGER = logging.getLogger(__name__)
@@ -77,7 +78,7 @@ class MonitorService:
     async def _tick(self) -> None:
         self._last_tick_at = utc_now()
         now = time.monotonic()
-        monitors = self.list_monitors(enabled_only=True)
+        monitors = self.list_monitors(enabled_only=True, include_secrets=True)
         for monitor in monitors:
             monitor_id = int(monitor["id"])
             interval = int(monitor["interval_seconds"])
@@ -103,7 +104,7 @@ class MonitorService:
             self._last_scheduler_error = str(exc)
             LOGGER.exception("Scheduled monitor check task failed")
 
-    def list_monitors(self, enabled_only: bool = False) -> list[dict[str, Any]]:
+    def list_monitors(self, enabled_only: bool = False, include_secrets: bool = False) -> list[dict[str, Any]]:
         where = "WHERE m.enabled = 1" if enabled_only else ""
         rows = self.db.fetchall(
             f"""
@@ -115,9 +116,9 @@ class MonitorService:
             ORDER BY m.name COLLATE NOCASE
             """
         )
-        return [self._hydrate_monitor(row) for row in rows]
+        return [self._hydrate_monitor(row, mask_secrets=not include_secrets) for row in rows]
 
-    def get_monitor(self, monitor_id: int) -> dict[str, Any]:
+    def get_monitor(self, monitor_id: int, include_secrets: bool = False) -> dict[str, Any]:
         row = self.db.fetchone(
             """
             SELECT m.*, g.name AS group_name, g.maintenance_until AS group_maintenance_until,
@@ -130,7 +131,7 @@ class MonitorService:
         )
         if not row:
             raise KeyError(monitor_id)
-        return self._hydrate_monitor(row)
+        return self._hydrate_monitor(row, mask_secrets=not include_secrets)
 
     def list_groups(self) -> list[dict[str, Any]]:
         groups = self.db.fetchall("SELECT * FROM monitor_groups ORDER BY name COLLATE NOCASE")
@@ -204,7 +205,7 @@ class MonitorService:
         return [self.get_monitor(monitor_id) for monitor_id in created_ids]
 
     async def update_monitor(self, monitor_id: int, payload: dict[str, Any]) -> dict[str, Any]:
-        current = self.get_monitor(monitor_id)
+        current = self.get_monitor(monitor_id, include_secrets=True)
         merged = {
             "type": payload.get("type", current["type"]),
             "name": payload.get("name", current["name"]),
@@ -212,7 +213,7 @@ class MonitorService:
             "interval_seconds": payload.get("interval_seconds", current["interval_seconds"]),
             "group_id": payload.get("group_id", current.get("group_id")),
             "enabled": payload.get("enabled", current["enabled"]),
-            "config": payload.get("config", current["config"]),
+            "config": preserve_existing_secrets(payload.get("config", current["config"]), current["config"]),
         }
         monitor = self._normalize_payload(merged)
         self._ensure_unique_url_monitor(monitor, exclude_id=monitor_id)
@@ -244,7 +245,7 @@ class MonitorService:
             updated,
             current["status"],
             updated["status"],
-            {"previous_config": current["config"], "config": updated["config"]},
+            {"previous_config": sanitize_secrets(current["config"]), "config": updated["config"]},
         )
         if bool(current["enabled"]) != bool(updated["enabled"]):
             self._record_local_event(
@@ -273,7 +274,7 @@ class MonitorService:
             "http_status": result.http_status,
             "content_hash": result.content_hash,
             "error": result.error,
-            "details": result.details or {},
+            "details": sanitize_secrets(result.details or {}),
         }
 
     def delete_monitor(self, monitor_id: int) -> None:
@@ -317,7 +318,7 @@ class MonitorService:
             self.running.discard(monitor_id)
 
     async def _run_check_now(self, monitor_id: int) -> dict[str, Any]:
-        monitor = self.get_monitor(monitor_id)
+        monitor = self.get_monitor(monitor_id, include_secrets=True)
         previous_status = monitor["status"]
         result = await self._check(monitor)
         final_status, failure_count, recovery_count, threshold_pending = self._status_after_thresholds(
@@ -328,10 +329,11 @@ class MonitorService:
         changed = previous_status != final_status
         content_changed = result.content_changed
         last_changed_at = now if changed or content_changed else monitor.get("last_changed_at")
-        details = {
+        details = sanitize_secrets({
             **(result.details or {}),
             "raw_status": result.status,
             "effective_status": final_status,
+            "severity": self._monitor_severity(monitor, result.details),
             "failure_count": failure_count,
             "recovery_count": recovery_count,
             "failure_threshold": self._monitor_int_setting(
@@ -346,7 +348,7 @@ class MonitorService:
                 self.config.recovery_threshold,
                 1,
             ),
-        }
+        })
 
         self.db.execute(
             """
@@ -401,7 +403,7 @@ class MonitorService:
                 int(result.content_changed),
                 result.content_hash,
                 dumps_json(
-                    {
+                    sanitize_secrets({
                         "monitor_id": monitor_id,
                         "monitor_type": monitor["type"],
                         "status": final_status,
@@ -409,7 +411,7 @@ class MonitorService:
                         "checked_at": now,
                         "error_message": result.error,
                         **details,
-                    }
+                    })
                 ),
             ),
         )
@@ -424,7 +426,7 @@ class MonitorService:
         if should_store_snapshot:
             self._store_snapshot(monitor, result)
 
-        updated = self.get_monitor(monitor_id)
+        updated = self.get_monitor(monitor_id, include_secrets=True)
         updated["change_count"] = self._change_count(monitor_id)
         updated["last_details"] = details
         await self.ha.publish_monitor_state(updated)
@@ -444,7 +446,8 @@ class MonitorService:
                 await self._record_event("website_changed", updated, previous_status, final_status, details)
             if monitor["type"] in {"http_status", "http_hash"} and result.error:
                 await self._record_event("website_error", updated, previous_status, final_status, details)
-        return updated
+        await self._handle_alert_routing(updated, previous_status, final_status, result.error, details)
+        return sanitize_secrets(updated)
 
     async def _check(self, monitor: dict[str, Any]) -> CheckResult:
         try:
@@ -546,7 +549,8 @@ class MonitorService:
             "previous_state": previous_state,
             "new_state": new_state,
             "created_at": utc_now(),
-            "details": details or {},
+            "severity": self._monitor_severity(monitor, details),
+            "details": sanitize_secrets(details or {}),
         }
         delivered = await self.ha.fire_event(event_type, payload)
         self.db.execute(
@@ -573,7 +577,8 @@ class MonitorService:
             "previous_state": previous_state,
             "new_state": new_state,
             "created_at": utc_now(),
-            "details": details or {},
+            "severity": self._monitor_severity(monitor, details),
+            "details": sanitize_secrets(details or {}),
         }
         self.db.execute(
             """
@@ -582,6 +587,130 @@ class MonitorService:
             """,
             (monitor["id"], event_type, previous_state, new_state, dumps_json(payload)),
         )
+
+    @staticmethod
+    def _monitor_severity(monitor: dict[str, Any], details: dict[str, Any] | None = None) -> str:
+        if details and details.get("severity"):
+            return str(details["severity"])
+        config = monitor.get("config") if isinstance(monitor.get("config"), dict) else {}
+        return str(config.get("severity") or "warning")
+
+    async def _handle_alert_routing(
+        self,
+        monitor: dict[str, Any],
+        previous_status: str | None,
+        final_status: str,
+        error: str | None,
+        details: dict[str, Any],
+    ) -> None:
+        config = dict(monitor.get("config") or {})
+        state = dict(config.get("_alert_state") or {})
+        severity = self._monitor_severity(monitor, details)
+        active = final_status == "warning" or self._is_incident_status(final_status)
+        now = utc_now()
+        event_details = {
+            **details,
+            "severity": severity,
+            "alert_channels": config.get("alert_channels", ["home_assistant_event"]),
+        }
+        if active:
+            key = f"{final_status}:{error or details.get('error_message') or ''}"[:500]
+            last_at = parse_time(state.get("last_at"))
+            minutes_since = (
+                (datetime.now(UTC) - last_at).total_seconds() / 60 if last_at else None
+            )
+            cooldown = int(config.get("cooldown_minutes") or 0)
+            repeat_every = int(config.get("repeat_every_minutes") or 0)
+            repeats = int(state.get("repeats") or 0)
+            max_repeats = int(config.get("max_repeats") or 0)
+            duplicate = bool(config.get("deduplicate_alerts", True)) and state.get("last_key") == key
+            suppressed_reason: str | None = None
+            repeated = False
+            if self._is_maintenance_active(monitor):
+                suppressed_reason = "maintenance"
+            elif duplicate and cooldown and minutes_since is not None and minutes_since < cooldown:
+                suppressed_reason = "cooldown"
+            elif duplicate and repeat_every and minutes_since is not None and minutes_since >= repeat_every:
+                repeated = True
+                if max_repeats and repeats >= max_repeats:
+                    suppressed_reason = "max_repeats"
+            elif duplicate and not cooldown and not repeat_every:
+                suppressed_reason = "deduplicated"
+
+            if suppressed_reason:
+                self._record_local_event(
+                    "monitor_alert_suppressed",
+                    monitor,
+                    previous_status,
+                    final_status,
+                    {**event_details, "alert_sent": False, "suppressed_reason": suppressed_reason},
+                )
+            else:
+                event_type = "monitor_alert_repeated" if repeated else "monitor_alert"
+                if "home_assistant_event" in config.get("alert_channels", ["home_assistant_event"]):
+                    await self._record_event(
+                        event_type,
+                        monitor,
+                        previous_status,
+                        final_status,
+                        {**event_details, "alert_sent": True},
+                    )
+                else:
+                    self._record_local_event(
+                        event_type,
+                        monitor,
+                        previous_status,
+                        final_status,
+                        {**event_details, "alert_sent": True},
+                    )
+                await self._deliver_alert_channels(config, monitor, final_status, event_details)
+                state["last_at"] = now
+                state["last_key"] = key
+                state["repeats"] = repeats + 1 if repeated else 0
+            state["active"] = True
+        else:
+            if state.get("active") and config.get("notify_on_recovery", True):
+                await self._record_event(
+                    "monitor_alert_recovered",
+                    monitor,
+                    previous_status,
+                    final_status,
+                    {**event_details, "alert_sent": True},
+                )
+            state = {"active": False, "last_recovered_at": now}
+
+        config["_alert_state"] = state
+        self.db.execute(
+            "UPDATE monitors SET config_json = ?, updated_at = datetime('now') WHERE id = ?",
+            (dumps_json(config), monitor["id"]),
+        )
+
+    async def _deliver_alert_channels(
+        self,
+        config: dict[str, Any],
+        monitor: dict[str, Any],
+        final_status: str,
+        details: dict[str, Any],
+    ) -> None:
+        channels = config.get("alert_channels", ["home_assistant_event"])
+        title = f"Monitoring Center: {monitor['name']}"
+        message = f"{monitor['name']} changed to {final_status} ({details.get('severity', 'warning')})"
+        if "persistent_notification" in channels or "home_assistant_persistent_notification" in channels:
+            await self.ha.create_persistent_notification(title, message)
+        if "webhook" in channels and config.get("webhook_url"):
+            await self.ha.post_webhook(
+                str(config["webhook_url"]),
+                sanitize_secrets(
+                    {
+                        "monitor_id": monitor["id"],
+                        "monitor_name": monitor["name"],
+                        "monitor_type": monitor["type"],
+                        "target": monitor["target"],
+                        "new_state": final_status,
+                        "details": details,
+                    }
+                ),
+            )
 
     def _sync_incident(
         self,
@@ -689,7 +818,7 @@ class MonitorService:
             params.append(filters["to_date"])
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         limit = min(int(filters.get("limit", 250)), 1000)
-        return self.db.fetchall(
+        rows = self.db.fetchall(
             f"""
             SELECT c.*, m.name AS monitor_name, m.type AS monitor_type, m.target
             FROM monitor_checks c
@@ -700,6 +829,12 @@ class MonitorService:
             """,
             (*params, limit),
         )
+        for row in rows:
+            details = loads_json(row.get("details_json"), {})
+            row["severity"] = details.get("severity") or details.get("alert_severity")
+        if filters.get("severity"):
+            rows = [row for row in rows if str(row.get("severity") or "") == str(filters["severity"])]
+        return rows
 
     def get_summary(self) -> dict[str, Any]:
         monitors = self.list_monitors()
@@ -1078,6 +1213,15 @@ class MonitorService:
         if "state" in details:
             config["last_ha_state"] = details["state"]
             changed = True
+        if "last_hash" in details:
+            config["last_hash"] = details["last_hash"]
+            changed = True
+        if "last_output_hash" in details:
+            config["last_output_hash"] = details["last_output_hash"]
+            changed = True
+        if "_alert_state" in details:
+            config["_alert_state"] = details["_alert_state"]
+            changed = True
         if changed:
             self.db.execute(
                 "UPDATE monitors SET config_json = ?, updated_at = datetime('now') WHERE id = ?",
@@ -1143,6 +1287,7 @@ class MonitorService:
         try:
             plugin = get_plugin(monitor_type)
             target, config = plugin.validate(payload["target"], config, self.config)
+            config = self._normalize_common_monitor_config(config)
         except HTTPException:
             raise
         except Exception as exc:
@@ -1190,6 +1335,25 @@ class MonitorService:
                 normalized.pop("max_page_size_kb", None)
         return normalized
 
+    @staticmethod
+    def _normalize_common_monitor_config(config: dict[str, Any]) -> dict[str, Any]:
+        normalized = dict(config)
+        severity = str(normalized.get("severity") or "warning").strip().lower()
+        normalized["severity"] = severity if severity in {"info", "warning", "critical"} else "warning"
+        normalized["cooldown_minutes"] = _safe_int(normalized.get("cooldown_minutes"), 30, 0)
+        normalized["notify_on_recovery"] = bool(normalized.get("notify_on_recovery", True))
+        normalized["repeat_every_minutes"] = _safe_int(normalized.get("repeat_every_minutes"), 0, 0)
+        normalized["max_repeats"] = _safe_int(normalized.get("max_repeats"), 0, 0)
+        normalized["deduplicate_alerts"] = bool(normalized.get("deduplicate_alerts", True))
+        channels = normalized.get("alert_channels")
+        if isinstance(channels, list):
+            normalized["alert_channels"] = [str(channel) for channel in channels if str(channel).strip()]
+        elif channels:
+            normalized["alert_channels"] = [item.strip() for item in str(channels).split(",") if item.strip()]
+        else:
+            normalized["alert_channels"] = ["home_assistant_event"]
+        return normalized
+
     def _ensure_unique_url_monitor(self, monitor: dict[str, Any], exclude_id: int | None = None) -> None:
         if monitor["type"] not in URL_MONITOR_TYPES:
             return
@@ -1210,12 +1374,14 @@ class MonitorService:
                 )
 
     @staticmethod
-    def _hydrate_monitor(row: dict[str, Any]) -> dict[str, Any]:
+    def _hydrate_monitor(row: dict[str, Any], mask_secrets: bool = True) -> dict[str, Any]:
         row["enabled"] = bool(row["enabled"])
         row["failure_count"] = int(row.get("failure_count") or 0)
         row["recovery_count"] = int(row.get("recovery_count") or 0)
         row["type"] = resolve_type(row["type"])
         row["config"] = loads_json(row.pop("config_json", None), {})
+        if mask_secrets:
+            row["config"] = sanitize_secrets(row["config"])
         row["maintenance_active"] = _is_future(row.get("maintenance_until")) or _is_future(
             row.get("group_maintenance_until")
         )

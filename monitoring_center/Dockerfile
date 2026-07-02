@@ -21,7 +21,7 @@ WORKDIR /app
 COPY requirements.txt /app/
 COPY wheels /wheels
 RUN python -m venv /opt/monitoring-center \
-  && /opt/monitoring-center/bin/pip install --no-cache-dir --no-index --find-links=/wheels -r /app/requirements.txt \
+  && /opt/monitoring-center/bin/pip install --no-cache-dir --find-links=/wheels -r /app/requirements.txt \
   && rm -rf /wheels
 
 COPY monitoring_center /app/monitoring_center

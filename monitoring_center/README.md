@@ -21,6 +21,51 @@ Monitoring Center to lokalny dodatek Home Assistant do wspólnego monitorowania 
 - eventy typów monitorów, np. `website_hash_changed`, `ssl_certificate_expiring`, `dns_record_changed`,
 - import i export konfiguracji monitorów do JSON.
 
+## Nowe typy systemowe i sieciowe
+
+Wszystkie nowe kontrole sa typami monitora w istniejacym systemie pluginow `monitor_types` i pojawiaja sie w tym
+samym widoku **Monitoring**. Korzystaja z tej samej historii, statusow, thresholdow, retry, maintenance mode,
+eventow Home Assistant i encji HA co ping, TCP, DNS, SSL, REST API, HA entity, MQTT i WWW.
+
+Dodane typy obejmuja `ssh_command`, `docker_container`, `docker_compose_service`, `docker_healthcheck`,
+`linux_host`, `disk_usage`, `backup_age`, `backup_file`, `ha_backup`, `ha_health`, `pihole_health`,
+`unifi_device`, `unifi_wan`, `snmp_oid`, `snmp_interface`, `ssh_log_regex`, `journald_regex`,
+`docker_log_regex`, `file_exists`, `file_age`, `file_hash`, `directory_size` i `directory_file_count`.
+
+Typy oparte o SSH wymagaja `asyncssh`. Sekrety (`password`, `private_key`, `private_key_passphrase`,
+`api_token`, `community`) sa maskowane w API, historii i eventach jako `********`. Przy edycji monitora
+pozostawienie pustego pola sekretu zachowuje poprzednia wartosc.
+
+Przyklad SSH / Bash:
+
+```json
+{
+  "type": "ssh_command",
+  "name": "Docker service",
+  "target": "192.168.1.10:22",
+  "interval_seconds": 300,
+  "config": {
+    "host": "192.168.1.10",
+    "port": 22,
+    "username": "root",
+    "auth_method": "private_key",
+    "private_key": "-----BEGIN OPENSSH PRIVATE KEY-----...",
+    "command": "systemctl is-active docker",
+    "success_exit_codes": [0],
+    "warning_exit_codes": [3],
+    "error_exit_codes": [1, 2, 4, 5],
+    "max_output_chars": 4000,
+    "store_output": true
+  }
+}
+```
+
+Kazdy monitor moze miec wspolne pola alertow w `config_json`: `severity`, `cooldown_minutes`,
+`notify_on_recovery`, `repeat_every_minutes`, `max_repeats`, `deduplicate_alerts` i `alert_channels`.
+Eventy alertowe to `monitor_alert`, `monitor_alert_recovered`, `monitor_alert_suppressed` i
+`monitor_alert_repeated`; payload zawiera `severity` i bezpieczne `details`. Obslugiwane kanaly to
+`home_assistant_event`, `persistent_notification` i opcjonalny `webhook` z polem `webhook_url`.
+
 ## Encje Home Assistant
 
 Jeżeli opcja `publish_home_assistant_entities` jest włączona, dodatek publikuje stany przez lokalne API Home Assistant:

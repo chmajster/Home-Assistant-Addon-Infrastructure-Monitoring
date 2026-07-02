@@ -632,6 +632,29 @@ function typeDisplayName(type) {
     rest_api: "REST API",
     ha_entity: "Encja Home Assistant",
     mqtt_monitor: "MQTT monitor",
+    ssh_command: "SSH / Bash",
+    docker_container: "Docker Container",
+    docker_compose_service: "Docker Compose Service",
+    docker_healthcheck: "Docker Healthcheck",
+    linux_host: "Linux Host Health",
+    disk_usage: "Disk Usage",
+    backup_age: "Backup Age",
+    backup_file: "Backup File",
+    ha_backup: "Home Assistant Backup",
+    ha_health: "Home Assistant Health",
+    pihole_health: "Pi-hole Health",
+    unifi_device: "UniFi Device",
+    unifi_wan: "UniFi WAN",
+    snmp_oid: "SNMP OID",
+    snmp_interface: "SNMP Interface",
+    ssh_log_regex: "SSH Log Regex",
+    journald_regex: "Journald Regex",
+    docker_log_regex: "Docker Log Regex",
+    file_exists: "File Exists",
+    file_age: "File Age",
+    file_hash: "File Hash",
+    directory_size: "Directory Size",
+    directory_file_count: "Directory File Count",
   };
   return labels[key] || type.label || key;
 }
@@ -728,6 +751,19 @@ function applyPreset() {
   openMonitorForm({ ...preset, enabled: true });
 }
 
+const SSH_CONFIG_TYPES = new Set([
+  "ssh_command", "docker_container", "docker_compose_service", "docker_healthcheck", "linux_host", "disk_usage",
+  "backup_age", "backup_file", "ha_backup", "unifi_device", "unifi_wan", "ssh_log_regex", "journald_regex",
+  "docker_log_regex", "file_exists", "file_age", "file_hash", "directory_size", "directory_file_count",
+]);
+const DOCKER_TYPES = new Set(["docker_container", "docker_compose_service", "docker_healthcheck"]);
+const BACKUP_FILE_TYPES = new Set([
+  "backup_age", "backup_file", "ha_backup", "file_exists", "file_age", "file_hash", "directory_size",
+  "directory_file_count",
+]);
+const LOG_REGEX_TYPES = new Set(["ssh_log_regex", "journald_regex", "docker_log_regex"]);
+const SNMP_TYPES = new Set(["snmp_oid", "snmp_interface"]);
+
 function renderTypeFields(type) {
   $$(".type-options").forEach((node) => node.classList.add("hidden"));
   const targetLabels = {
@@ -740,6 +776,29 @@ function renderTypeFields(type) {
     rest_api: ["URL lub domena", "https://example.com/api/status"],
     ha_entity: ["Entity ID", "sensor.example"],
     mqtt_monitor: ["Topic lub broker", "home/topic/status"],
+    ssh_command: ["Host SSH", "192.168.1.10:22"],
+    docker_container: ["Host SSH i kontener", "192.168.1.50:homeassistant"],
+    docker_compose_service: ["Host SSH i usluga", "192.168.1.50:homeassistant"],
+    docker_healthcheck: ["Host SSH i kontener", "192.168.1.50:homeassistant"],
+    linux_host: ["Host SSH", "192.168.1.50:22"],
+    disk_usage: ["Host SSH i mountpoint", "192.168.1.50:/"],
+    backup_age: ["Host SSH i katalog", "192.168.1.50:/backup"],
+    backup_file: ["Host SSH i katalog", "192.168.1.50:/backup"],
+    ha_backup: ["Host SSH i katalog", "192.168.1.50:/backup"],
+    ha_health: ["Cel", "home_assistant"],
+    pihole_health: ["Pi-hole URL", "http://192.168.1.2/admin"],
+    unifi_device: ["Host SSH i urzadzenie", "192.168.1.1"],
+    unifi_wan: ["Host SSH i WAN target", "8.8.8.8"],
+    snmp_oid: ["Host i OID", "192.168.1.1"],
+    snmp_interface: ["Host i interfejs", "192.168.1.1"],
+    ssh_log_regex: ["Host SSH i log", "192.168.1.50:/var/log/syslog"],
+    journald_regex: ["Host SSH", "192.168.1.50:22"],
+    docker_log_regex: ["Host SSH i kontener", "192.168.1.50:homeassistant"],
+    file_exists: ["Host SSH i sciezka", "192.168.1.50:/backup/file.tar"],
+    file_age: ["Host SSH i sciezka", "192.168.1.50:/backup"],
+    file_hash: ["Host SSH i plik", "192.168.1.50:/etc/hosts"],
+    directory_size: ["Host SSH i katalog", "192.168.1.50:/backup"],
+    directory_file_count: ["Host SSH i katalog", "192.168.1.50:/backup"],
   };
   const [label, placeholder] = targetLabels[type] || ["Cel monitorowania", "IP, hostname, URL albo entity_id"];
   if ($("#targetLabelText")) $("#targetLabelText").textContent = label;
@@ -754,6 +813,15 @@ function renderTypeFields(type) {
   if (type === "rest_api") visibleSections.push("#restOptions");
   if (type === "ha_entity") visibleSections.push("#haEntityOptions");
   if (type === "mqtt_monitor") visibleSections.push("#mqttOptions");
+  if (SSH_CONFIG_TYPES.has(type)) visibleSections.push("#sshOptions");
+  if (DOCKER_TYPES.has(type)) visibleSections.push("#dockerOptions");
+  if (type === "linux_host") visibleSections.push("#linuxOptions");
+  if (type === "disk_usage") visibleSections.push("#diskOptions");
+  if (BACKUP_FILE_TYPES.has(type)) visibleSections.push("#backupOptions");
+  if (type === "ha_health") visibleSections.push("#haHealthOptions");
+  if (type === "pihole_health") visibleSections.push("#piholeOptions");
+  if (SNMP_TYPES.has(type)) visibleSections.push("#snmpOptions");
+  if (LOG_REGEX_TYPES.has(type)) visibleSections.push("#logRegexOptions");
   visibleSections.forEach((selector) => $(selector)?.classList.remove("hidden"));
   $("#typeOptionsSection")?.classList.toggle("hidden", visibleSections.length === 0);
   renderMonitorTypeCards();
@@ -796,7 +864,142 @@ function buildMonitorConfig(form, type) {
     if (form.elements.topic.value.trim()) config.topic = form.elements.topic.value.trim();
     if (form.elements.topic_timeout_seconds.value) config.topic_timeout_seconds = Number(form.elements.topic_timeout_seconds.value);
   }
+  if (SSH_CONFIG_TYPES.has(type)) addSshConfig(config, form);
+  if (DOCKER_TYPES.has(type)) addDockerConfig(config, form);
+  if (type === "linux_host") addLinuxConfig(config, form);
+  if (type === "disk_usage") addDiskConfig(config, form);
+  if (BACKUP_FILE_TYPES.has(type)) addBackupFileConfig(config, form, type);
+  if (type === "ha_health") addHaHealthConfig(config, form);
+  if (type === "pihole_health") addPiHoleConfig(config, form);
+  if (SNMP_TYPES.has(type)) addSnmpConfig(config, form);
+  if (LOG_REGEX_TYPES.has(type)) addLogRegexConfig(config, form, type);
+  addAlertConfig(config, form);
   return config;
+}
+
+function addSshConfig(config, form) {
+  if (form.elements.ssh_host.value.trim()) config.host = form.elements.ssh_host.value.trim();
+  if (form.elements.ssh_port.value) config.port = Number(form.elements.ssh_port.value);
+  if (form.elements.ssh_username.value.trim()) config.username = form.elements.ssh_username.value.trim();
+  config.auth_method = form.elements.ssh_auth_method.value;
+  if (form.elements.ssh_password.value) config.password = form.elements.ssh_password.value;
+  if (form.elements.ssh_private_key.value) config.private_key = form.elements.ssh_private_key.value;
+  if (form.elements.ssh_private_key_passphrase.value) config.private_key_passphrase = form.elements.ssh_private_key_passphrase.value;
+  config.known_hosts_policy = "auto_add";
+  if (form.elements.ssh_connect_timeout_seconds.value) config.connect_timeout_seconds = Number(form.elements.ssh_connect_timeout_seconds.value);
+  if (form.elements.ssh_command_timeout_seconds.value) config.command_timeout_seconds = Number(form.elements.ssh_command_timeout_seconds.value);
+  if (form.elements.ssh_command.value.trim()) config.command = form.elements.ssh_command.value.trim();
+  config.shell = "bash";
+  if (form.elements.ssh_success_exit_codes.value.trim()) config.success_exit_codes = csvNumbers(form.elements.ssh_success_exit_codes.value);
+  if (form.elements.ssh_warning_exit_codes.value.trim()) config.warning_exit_codes = csvNumbers(form.elements.ssh_warning_exit_codes.value);
+  if (form.elements.ssh_error_exit_codes.value.trim()) config.error_exit_codes = csvNumbers(form.elements.ssh_error_exit_codes.value);
+  ["success_stdout_regex", "warning_stdout_regex", "error_stdout_regex", "success_stderr_regex", "warning_stderr_regex", "error_stderr_regex", "alert_on_stdout_regex", "alert_on_stderr_regex"].forEach((key) => {
+    const input = form.elements[`ssh_${key}`];
+    if (input?.value.trim()) config[key] = input.value.trim();
+  });
+  if (form.elements.ssh_max_output_chars.value) config.max_output_chars = Number(form.elements.ssh_max_output_chars.value);
+  config.store_output = form.elements.ssh_store_output.checked;
+}
+
+function addDockerConfig(config, form) {
+  config.connection_method = "ssh";
+  if (form.elements.container_name.value.trim()) config.container_name = form.elements.container_name.value.trim();
+  if (form.elements.max_restart_count.value) config.max_restart_count = Number(form.elements.max_restart_count.value);
+  if (form.elements.cpu_warning_percent.value) config.cpu_warning_percent = Number(form.elements.cpu_warning_percent.value);
+  if (form.elements.memory_warning_percent.value) config.memory_warning_percent = Number(form.elements.memory_warning_percent.value);
+  if (form.elements.log_tail_lines.value) config.log_tail_lines = Number(form.elements.log_tail_lines.value);
+  if (form.elements.log_error_regex.value.trim()) config.log_error_regex = form.elements.log_error_regex.value.trim();
+  config.check_running = form.elements.check_running.checked;
+  config.check_health = form.elements.check_health.checked;
+  config.store_logs = form.elements.store_logs.checked;
+}
+
+function addLinuxConfig(config, form) {
+  ["cpu_load_warning", "cpu_load_error", "memory_error_percent", "swap_warning_percent", "disk_warning_percent", "disk_error_percent", "inode_warning_percent", "temperature_warning_c", "temperature_error_c"].forEach((key) => {
+    if (form.elements[key].value) config[key] = Number(form.elements[key].value);
+  });
+  if (form.elements.memory_warning_percent_linux.value) config.memory_warning_percent = Number(form.elements.memory_warning_percent_linux.value);
+  config.systemd_services = csvStrings(form.elements.systemd_services.value);
+}
+
+function addDiskConfig(config, form) {
+  if (form.elements.mountpoint.value.trim()) config.mountpoint = form.elements.mountpoint.value.trim();
+  ["warning_percent", "error_percent", "warning_free_gb", "error_free_gb"].forEach((key) => {
+    if (form.elements[key].value) config[key] = Number(form.elements[key].value);
+  });
+  config.check_inodes = form.elements.check_inodes.checked;
+  config.check_readonly = form.elements.check_readonly.checked;
+}
+
+function addBackupFileConfig(config, form, type) {
+  if (form.elements.file_path.value.trim()) config.path = form.elements.file_path.value.trim();
+  if (form.elements.filename_regex.value.trim()) config.filename_regex = form.elements.filename_regex.value.trim();
+  ["max_age_hours", "min_size_mb", "max_size_mb", "max_file_count"].forEach((key) => {
+    if (form.elements[key].value) config[key] = Number(form.elements[key].value);
+  });
+  if (type === "file_hash" && form.elements.hash_algorithm.value.trim()) config.hash_algorithm = form.elements.hash_algorithm.value.trim();
+}
+
+function addHaHealthConfig(config, form) {
+  ["max_unavailable_entities_warning", "max_unavailable_entities_error", "max_unknown_entities_warning"].forEach((key) => {
+    if (form.elements[key].value) config[key] = Number(form.elements[key].value);
+  });
+  ["check_updates", "check_supervisor", "check_recorder", "check_log_errors"].forEach((key) => {
+    config[key] = form.elements[key].checked;
+  });
+}
+
+function addPiHoleConfig(config, form) {
+  if (form.elements.pihole_base_url.value.trim()) config.base_url = form.elements.pihole_base_url.value.trim();
+  if (form.elements.pihole_api_token.value) config.api_token = form.elements.pihole_api_token.value;
+  if (form.elements.dns_host.value.trim()) config.dns_host = form.elements.dns_host.value.trim();
+  if (form.elements.dns_port.value) config.dns_port = Number(form.elements.dns_port.value);
+  if (form.elements.test_domain.value.trim()) config.test_domain = form.elements.test_domain.value.trim();
+  if (form.elements.min_queries_last_10m.value) config.min_queries_last_10m = Number(form.elements.min_queries_last_10m.value);
+  if (form.elements.max_gravity_age_days.value) config.max_gravity_age_days = Number(form.elements.max_gravity_age_days.value);
+}
+
+function addSnmpConfig(config, form) {
+  if (form.elements.snmp_host.value.trim()) config.host = form.elements.snmp_host.value.trim();
+  if (form.elements.snmp_port.value) config.port = Number(form.elements.snmp_port.value);
+  config.version = form.elements.snmp_version.value;
+  if (form.elements.snmp_community.value) config.community = form.elements.snmp_community.value;
+  if (form.elements.oid.value.trim()) config.oid = form.elements.oid.value.trim();
+  config.operator = form.elements.operator.value;
+  if (form.elements.warning_value.value) config.warning_value = Number(form.elements.warning_value.value);
+  if (form.elements.error_value.value) config.error_value = Number(form.elements.error_value.value);
+}
+
+function addLogRegexConfig(config, form, type) {
+  if (form.elements.log_path.value.trim()) {
+    if (type === "docker_log_regex") config.container_name = form.elements.log_path.value.trim();
+    else config.path = form.elements.log_path.value.trim();
+  }
+  if (form.elements.log_regex.value.trim()) config.regex = form.elements.log_regex.value.trim();
+  if (form.elements.warning_regex.value.trim()) config.warning_regex = form.elements.warning_regex.value.trim();
+  if (form.elements.error_regex.value.trim()) config.error_regex = form.elements.error_regex.value.trim();
+  if (form.elements.tail_lines.value) config.tail_lines = Number(form.elements.tail_lines.value);
+  if (form.elements.max_matches.value) config.max_matches = Number(form.elements.max_matches.value);
+  config.only_new_matches = form.elements.only_new_matches.checked;
+}
+
+function addAlertConfig(config, form) {
+  config.severity = form.elements.severity.value;
+  if (form.elements.cooldown_minutes.value) config.cooldown_minutes = Number(form.elements.cooldown_minutes.value);
+  config.notify_on_recovery = form.elements.notify_on_recovery.checked;
+  if (form.elements.repeat_every_minutes.value) config.repeat_every_minutes = Number(form.elements.repeat_every_minutes.value);
+  if (form.elements.max_repeats.value) config.max_repeats = Number(form.elements.max_repeats.value);
+  config.deduplicate_alerts = form.elements.deduplicate_alerts.checked;
+  config.alert_channels = csvStrings(form.elements.alert_channels.value || "home_assistant_event");
+  if (form.elements.webhook_url.value.trim()) config.webhook_url = form.elements.webhook_url.value.trim();
+}
+
+function csvNumbers(value) {
+  return String(value || "").split(",").map((item) => Number(item.trim())).filter((item) => Number.isFinite(item));
+}
+
+function csvStrings(value) {
+  return String(value || "").split(",").map((item) => item.trim()).filter(Boolean);
 }
 
 function filterMonitorsForList(monitors) {
@@ -2045,11 +2248,95 @@ function openMonitorForm(monitor) {
   form.elements.mqtt_port.value = monitor.config?.port || "";
   form.elements.topic.value = monitor.config?.topic || "";
   form.elements.topic_timeout_seconds.value = monitor.config?.topic_timeout_seconds || "";
+  populateExtendedMonitorFields(form, monitor.config || {});
   renderTestResult(null);
   $("#dialogTitle").textContent = monitor.id ? "Edytuj monitor" : "Dodaj monitor";
   renderTypeFields(form.elements.type.value);
   updateConfigPreview();
   $("#monitorDialog").showModal();
+}
+
+function populateExtendedMonitorFields(form, config) {
+  form.elements.ssh_host.value = config.host || "";
+  form.elements.ssh_port.value = config.port || "";
+  form.elements.ssh_username.value = config.username || "";
+  form.elements.ssh_auth_method.value = config.auth_method || "password";
+  form.elements.ssh_password.value = "";
+  form.elements.ssh_private_key.value = "";
+  form.elements.ssh_private_key_passphrase.value = "";
+  form.elements.ssh_command.value = config.command || "";
+  form.elements.ssh_connect_timeout_seconds.value = config.connect_timeout_seconds || "";
+  form.elements.ssh_command_timeout_seconds.value = config.command_timeout_seconds || "";
+  form.elements.ssh_success_exit_codes.value = (config.success_exit_codes || []).join(",");
+  form.elements.ssh_warning_exit_codes.value = (config.warning_exit_codes || []).join(",");
+  form.elements.ssh_error_exit_codes.value = (config.error_exit_codes || []).join(",");
+  ["success_stdout_regex", "warning_stdout_regex", "error_stdout_regex", "success_stderr_regex", "warning_stderr_regex", "error_stderr_regex", "alert_on_stdout_regex", "alert_on_stderr_regex"].forEach((key) => {
+    if (form.elements[`ssh_${key}`]) form.elements[`ssh_${key}`].value = config[key] || "";
+  });
+  form.elements.ssh_max_output_chars.value = config.max_output_chars || "";
+  form.elements.ssh_store_output.checked = config.store_output !== false;
+  form.elements.container_name.value = config.container_name || config.service_name || "";
+  form.elements.max_restart_count.value = config.max_restart_count ?? "";
+  form.elements.cpu_warning_percent.value = config.cpu_warning_percent ?? "";
+  form.elements.memory_warning_percent.value = config.memory_warning_percent ?? "";
+  form.elements.log_tail_lines.value = config.log_tail_lines ?? "";
+  form.elements.log_error_regex.value = config.log_error_regex || "";
+  form.elements.check_running.checked = config.check_running !== false;
+  form.elements.check_health.checked = config.check_health !== false;
+  form.elements.store_logs.checked = Boolean(config.store_logs);
+  ["cpu_load_warning", "cpu_load_error", "memory_error_percent", "swap_warning_percent", "disk_warning_percent", "disk_error_percent", "inode_warning_percent", "temperature_warning_c", "temperature_error_c"].forEach((key) => {
+    form.elements[key].value = config[key] ?? "";
+  });
+  form.elements.memory_warning_percent_linux.value = config.memory_warning_percent ?? "";
+  form.elements.systemd_services.value = (config.systemd_services || []).join(",");
+  form.elements.mountpoint.value = config.mountpoint || "";
+  ["warning_percent", "error_percent", "warning_free_gb", "error_free_gb"].forEach((key) => {
+    form.elements[key].value = config[key] ?? "";
+  });
+  form.elements.check_inodes.checked = config.check_inodes !== false;
+  form.elements.check_readonly.checked = config.check_readonly !== false;
+  form.elements.file_path.value = config.path || "";
+  form.elements.filename_regex.value = config.filename_regex || "";
+  ["max_age_hours", "min_size_mb", "max_size_mb", "max_file_count"].forEach((key) => {
+    form.elements[key].value = config[key] ?? "";
+  });
+  form.elements.hash_algorithm.value = config.hash_algorithm || "";
+  ["max_unavailable_entities_warning", "max_unavailable_entities_error", "max_unknown_entities_warning"].forEach((key) => {
+    form.elements[key].value = config[key] ?? "";
+  });
+  ["check_updates", "check_supervisor", "check_recorder", "check_log_errors"].forEach((key) => {
+    form.elements[key].checked = config[key] !== false;
+  });
+  form.elements.pihole_base_url.value = config.base_url || "";
+  form.elements.pihole_api_token.value = "";
+  form.elements.dns_host.value = config.dns_host || "";
+  form.elements.dns_port.value = config.dns_port || "";
+  form.elements.test_domain.value = config.test_domain || "";
+  form.elements.min_queries_last_10m.value = config.min_queries_last_10m ?? "";
+  form.elements.max_gravity_age_days.value = config.max_gravity_age_days ?? "";
+  form.elements.snmp_host.value = config.host || "";
+  form.elements.snmp_port.value = config.port || "";
+  form.elements.snmp_version.value = config.version || "2c";
+  form.elements.snmp_community.value = "";
+  form.elements.oid.value = config.oid || "";
+  form.elements.operator.value = config.operator || ">";
+  form.elements.warning_value.value = config.warning_value ?? "";
+  form.elements.error_value.value = config.error_value ?? "";
+  form.elements.log_path.value = config.path || config.container_name || "";
+  form.elements.log_regex.value = config.regex || "";
+  form.elements.warning_regex.value = config.warning_regex || "";
+  form.elements.error_regex.value = config.error_regex || "";
+  form.elements.tail_lines.value = config.tail_lines ?? "";
+  form.elements.max_matches.value = config.max_matches ?? "";
+  form.elements.only_new_matches.checked = config.only_new_matches !== false;
+  form.elements.severity.value = config.severity || "warning";
+  form.elements.cooldown_minutes.value = config.cooldown_minutes ?? "";
+  form.elements.notify_on_recovery.checked = config.notify_on_recovery !== false;
+  form.elements.repeat_every_minutes.value = config.repeat_every_minutes ?? "";
+  form.elements.max_repeats.value = config.max_repeats ?? "";
+  form.elements.deduplicate_alerts.checked = config.deduplicate_alerts !== false;
+  form.elements.alert_channels.value = (config.alert_channels || ["home_assistant_event"]).join(",");
+  form.elements.webhook_url.value = "";
 }
 
 function getMonitorFormInterval(monitor) {
@@ -2151,10 +2438,13 @@ function renderTestResult(result) {
   }
   const parts = [
     `Status: ${result.status || "-"}`,
+    result.details?.exit_code !== undefined && result.details?.exit_code !== null ? `Exit code: ${result.details.exit_code}` : "",
     `HTTP: ${result.http_status || "-"}`,
     `Czas: ${result.response_ms ? Number(result.response_ms).toFixed(1) + " ms" : "-"}`,
     `Data: ${formatDate(result.checked_at)}`,
     result.content_hash ? `Suma WWW: ${result.content_hash}` : "",
+    result.details?.stdout_excerpt ? `stdout: ${result.details.stdout_excerpt.slice(0, 500)}` : "",
+    result.details?.stderr_excerpt ? `stderr: ${result.details.stderr_excerpt.slice(0, 500)}` : "",
     result.error ? `Błąd: ${result.error}` : "",
   ].filter(Boolean);
   node.className = `test-result ${result.success ? "ok" : "bad"}`;
@@ -2201,6 +2491,7 @@ async function loadHistory() {
     ["monitor_id", $("#historyMonitor").value],
     ["type", $("#historyType").value],
     ["status", $("#historyStatus").value.trim()],
+    ["severity", $("#historySeverity")?.value || ""],
     ["from_date", toIso($("#historyFrom").value)],
     ["to_date", toIso($("#historyTo").value)],
     ["limit", $("#historyLimit")?.value || "250"],
@@ -2220,13 +2511,14 @@ async function loadHistory() {
       <td>${formatDate(row.checked_at)}</td>
       <td>${escapeHtml(row.monitor_name)}<br><small>${escapeHtml(row.target)}</small></td>
       <td><span class="badge ${badgeClass(row.status)}">${escapeHtml(row.status)}</span></td>
+      <td>${row.severity ? `<span class="badge">${escapeHtml(row.severity)}</span>` : "-"}</td>
       <td>${formatResponse(row.response_ms)}</td>
       <td>${row.http_status || "-"}</td>
       <td>${hashHtml(row.content_hash)}</td>
       <td>${row.packet_loss ?? "-"}</td>
       <td>${escapeHtml(row.error || "-")}</td>
     </tr>
-  `).join("") : '<tr><td colspan="8" class="empty">Brak wpisów historii dla wybranych filtrów.</td></tr>';
+  `).join("") : '<tr><td colspan="9" class="empty">Brak wpisów historii dla wybranych filtrów.</td></tr>';
   $$("[data-history-index]").forEach((row) => {
     row.addEventListener("click", () => openHistoryDetails(rows[Number(row.dataset.historyIndex)]));
   });
@@ -2251,6 +2543,7 @@ function openHistoryDetails(row) {
     Monitor: row.monitor_name,
     Target: row.target,
     Status: row.status,
+    Severity: row.severity || "-",
     Data: formatDate(row.checked_at),
     "Czas odpowiedzi": formatResponse(row.response_ms),
     HTTP: row.http_status || "-",
@@ -2499,7 +2792,7 @@ function renderEvents() {
         <div>
           <strong>${escapeHtml(event.event_type)}</strong>
           <p>${escapeHtml(payload.monitor_name || "System")} ${payload.target ? "· " + escapeHtml(payload.target) : ""}</p>
-          <small>${escapeHtml(payload.previous_state || "-")} → ${escapeHtml(payload.new_state || "-")}</small>
+          <small>${escapeHtml(payload.previous_state || "-")} → ${escapeHtml(payload.new_state || "-")} ${payload.severity ? "· " + escapeHtml(payload.severity) : ""}</small>
         </div>
         <small>${formatDate(event.created_at)} · HA: ${event.delivered_to_ha ? "tak" : "nie"}</small>
       </article>

@@ -123,6 +123,34 @@ class HomeAssistantClient:
             LOGGER.warning("Failed to fire Home Assistant event %s: %s", event_type, exc)
             return False
 
+    async def create_persistent_notification(self, title: str, message: str) -> bool:
+        if not self.available:
+            return False
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                response = await client.post(
+                    f"{self.base_url}/services/persistent_notification/create",
+                    headers=self._headers,
+                    json={"title": title, "message": message},
+                )
+                response.raise_for_status()
+            return True
+        except Exception as exc:  # pragma: no cover - network integration
+            LOGGER.warning("Failed to create Home Assistant persistent notification: %s", exc)
+            return False
+
+    async def post_webhook(self, url: str, payload: dict[str, Any]) -> bool:
+        if not url:
+            return False
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.post(url, json=payload)
+                response.raise_for_status()
+            return True
+        except Exception as exc:  # pragma: no cover - network integration
+            LOGGER.warning("Failed to deliver monitoring webhook: %s", exc)
+            return False
+
     async def _set_state(self, entity_id: str, state: Any, attributes: dict[str, Any]) -> None:
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:
