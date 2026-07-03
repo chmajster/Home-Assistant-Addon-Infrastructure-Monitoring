@@ -6,6 +6,12 @@ Format opiera się na konwencji Keep a Changelog, a wersjonowanie dodatku powinn
 
 ## [Unreleased]
 
+## [0.7.9] - 2026-07-03
+
+### Changed
+
+- Podniesiono wersje dodatku i metadanych aplikacji do `0.7.9`.
+
 ## [0.7.8] - 2026-07-02
 
 ### Added
