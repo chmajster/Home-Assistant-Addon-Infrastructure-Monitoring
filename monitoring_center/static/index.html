@@ -165,6 +165,7 @@
                 <p id="monitorCountLabel">0 z 0</p>
               </div>
               <div class="actions compact-actions">
+                <button id="openDiscoveryBtn" type="button">Wykryj monitory</button>
                 <button data-open-form="ping_host" class="primary" type="button">Dodaj monitor</button>
               </div>
             </div>
@@ -574,6 +575,39 @@
       <button class="tab" data-tab="events"><svg class="nav-icon" aria-hidden="true"><use href="#icon-events"></use></svg><span>Zdarzenia</span></button>
       <button class="tab" data-tab="settings"><svg class="nav-icon" aria-hidden="true"><use href="#icon-settings"></use></svg><span>Więcej</span></button>
     </nav>
+
+    <dialog id="discoveryDialog" class="drawer-dialog monitor-dialog">
+      <form id="discoveryForm" class="monitor-dialog-form" method="dialog">
+        <div class="drawer-head">
+          <div>
+            <h2>Wykryj monitory</h2>
+            <p>Znajdz potencjalne uslugi i wybierz, ktore chcesz dodac.</p>
+          </div>
+          <button id="closeDiscoveryBtn" class="dialog-close-btn" type="button" aria-label="Zamknij">×</button>
+        </div>
+        <section class="form-section grid-form">
+          <label class="check"><input name="source_home_assistant" type="checkbox" checked /> Home Assistant</label>
+          <label class="check"><input name="source_network" type="checkbox" /> Siec lokalna</label>
+          <label class="check"><input name="source_docker" type="checkbox" /> Docker</label>
+          <label class="check"><input name="source_unifi" type="checkbox" /> UniFi / SNMP</label>
+          <label>Zakres IP CIDR<input name="network_cidr" placeholder="192.168.1.0/24" /></label>
+          <label>Timeout s<input name="timeout_seconds" type="number" min="1" max="30" step="0.5" value="3" /></label>
+          <label>Maks. hostow<input name="max_hosts" type="number" min="1" max="1024" value="64" /></label>
+        </section>
+        <section class="form-section">
+          <div class="panel-head">
+            <h3>Propozycje</h3>
+            <span id="discoverySummary" class="badge unknown">Brak skanu</span>
+          </div>
+          <div id="discoveryResults" class="list empty">Uruchom skanowanie, aby zobaczyc propozycje.</div>
+        </section>
+        <menu class="dialog-footer">
+          <button type="button" data-dialog-close="discoveryDialog">Anuluj</button>
+          <button id="runDiscoveryBtn" class="primary" value="default">Skanuj</button>
+          <button id="importDiscoveryBtn" type="button">Importuj zaznaczone</button>
+        </menu>
+      </form>
+    </dialog>
 
     <dialog id="monitorDialog" class="drawer-dialog monitor-dialog">
       <form id="monitorForm" class="monitor-dialog-form" method="dialog">

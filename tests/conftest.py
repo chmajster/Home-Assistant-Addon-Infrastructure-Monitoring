@@ -10,6 +10,12 @@ from monitoring_center.migrations import migrate
 
 
 class DummyHomeAssistant:
+    def __init__(self) -> None:
+        self.states: list[dict] = []
+
+    async def list_states(self, timeout: float = 10.0) -> list[dict]:
+        return self.states
+
     async def publish_monitor_state(self, monitor: dict) -> None:
         return None
 

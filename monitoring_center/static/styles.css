@@ -1668,6 +1668,35 @@ pre {
   flex-basis: 18px;
 }
 
+.discovery-results {
+  display: grid;
+  gap: 10px;
+}
+
+.discovery-item {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.8fr) minmax(160px, 1.2fr) minmax(140px, 1fr) minmax(180px, 1.4fr) minmax(140px, 1fr);
+  gap: 10px;
+  align-items: end;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.discovery-item.duplicate {
+  opacity: 0.72;
+}
+
+.discovery-item small {
+  grid-column: 1 / -1;
+  color: var(--muted);
+}
+
+.discovery-check {
+  min-height: 40px;
+}
+
 @media (max-width: 1120px) {
   .dashboard-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .detail-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
@@ -1682,6 +1711,7 @@ pre {
   .type-card-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .monitor-dialog .grid-form { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .monitor-dialog .split { grid-template-columns: 1fr; }
+  .discovery-item { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 @media (max-width: 880px) {
@@ -1741,7 +1771,8 @@ pre {
   }
   .monitor-dialog .grid-form,
   .monitor-dialog .nested,
-  .type-card-grid {
+  .type-card-grid,
+  .discovery-item {
     grid-template-columns: 1fr;
   }
   .monitor-dialog .grid-form .check {

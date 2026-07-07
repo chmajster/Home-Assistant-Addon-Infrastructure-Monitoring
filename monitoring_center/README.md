@@ -82,6 +82,25 @@ Domyślny prefix to `monitoring_center`.
 
 Dodatek pobiera wyłącznie HTTP/HTTPS i nie wykonuje JavaScript. Limit rozmiaru strony, timeouty oraz blokada prywatnych adresów dla URL są konfigurowalne. Po włączeniu `block_private_networks` adres URL nie może rozwiązywać się do zakresów lokalnych, prywatnych, link-local, multicast, reserved ani unspecified.
 
+## Discovery monitorow
+
+W widoku **Monitoring** przycisk **Wykryj monitory** uruchamia skan propozycji. Discovery nigdy nie tworzy
+monitorow automatycznie: wyniki trafiaja do modala, gdzie mozna zaznaczyc wybrane pozycje, oznaczone
+duplikaty odznaczyc oraz edytowac nazwe, typ, target i grupe przed importem.
+
+Dostepne zrodla:
+
+- **Home Assistant**: encje `binary_sensor`, `sensor`, `device_tracker`, `switch`, `light` i `update`,
+- **Siec lokalna**: zakres CIDR podany przez uzytkownika, ping sweep oraz porty `22`, `53`, `80`, `443`,
+  `8123`, `1883`, `8080`, `8443`,
+- **Docker**: kontenery wykryte przez istniejaca konfiguracje SSH/Docker,
+- **UniFi/SNMP**: propozycje dla urzadzen opartych o istniejace konfiguracje UniFi albo SNMP.
+
+API discovery:
+
+- `POST /api/discovery/scan` przyjmuje `sources`, opcjonalne `network_cidr`, `timeout_seconds` i `max_hosts`,
+- `POST /api/discovery/import` tworzy tylko monitory przekazane przez UI albo klienta API.
+
 ## Dane
 
 SQLite jest przechowywany domyślnie w `/data/monitoring_center.db`. Schemat zawiera tabele:

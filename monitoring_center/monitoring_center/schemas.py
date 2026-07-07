@@ -4,6 +4,9 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+DISCOVERY_SOURCES = {"home_assistant", "network", "docker", "unifi"}
+TOPOLOGY_NODE_TYPES = {"internet", "router", "switch", "ap", "server", "iot", "service", "other"}
+
 
 class MonitorIn(BaseModel):
     type: str = Field(min_length=1, max_length=64)
@@ -29,6 +32,26 @@ class MonitorUpdate(BaseModel):
 
 class MonitorsImportIn(BaseModel):
     monitors: list[MonitorIn] = Field(default_factory=list, max_length=1000)
+
+
+class DiscoveryScanIn(BaseModel):
+    sources: list[str] = Field(default_factory=lambda: ["home_assistant"], max_length=4)
+    network_cidr: str | None = Field(default=None, max_length=64)
+    timeout_seconds: float = Field(default=3, gt=0, le=30)
+    max_hosts: int = Field(default=64, ge=1, le=1024)
+
+    def normalized_sources(self) -> list[str]:
+        return [source for source in dict.fromkeys(self.sources) if source in DISCOVERY_SOURCES]
+
+
+class DiscoveryImportMonitorIn(MonitorIn):
+    confidence: float | None = None
+    reason: str | None = None
+    duplicate_of_monitor_id: int | None = None
+
+
+class DiscoveryImportIn(BaseModel):
+    monitors: list[DiscoveryImportMonitorIn] = Field(default_factory=list, max_length=1000)
 
 
 class GroupIn(BaseModel):
@@ -62,3 +85,30 @@ class SettingsIn(BaseModel):
     publish_home_assistant_entities: bool
     publish_home_assistant_events: bool
     entity_prefix: str = Field(min_length=1, max_length=64)
+
+
+class TopologyNodeIn(BaseModel):
+    id: int | None = None
+    name: str = Field(min_length=1, max_length=120)
+    type: str = Field(default="other", min_length=1, max_length=32)
+    monitor_id: int | None = None
+    icon: str | None = Field(default=None, max_length=64)
+    x: float = 0
+    y: float = 0
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+    def normalized_type(self) -> str:
+        return self.type if self.type in TOPOLOGY_NODE_TYPES else "other"
+
+
+class TopologyEdgeIn(BaseModel):
+    id: int | None = None
+    source_node_id: int
+    target_node_id: int
+    label: str | None = Field(default=None, max_length=120)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class TopologyIn(BaseModel):
+    nodes: list[TopologyNodeIn] = Field(default_factory=list, max_length=500)
+    edges: list[TopologyEdgeIn] = Field(default_factory=list, max_length=1000)

@@ -36,6 +36,7 @@ const state = {
     search: "",
     sort: "date_desc",
   },
+  discoveryProposals: [],
 };
 
 const API_BASE = window.location.pathname === "/" ? "" : window.location.pathname.replace(/\/$/, "");
@@ -105,6 +106,7 @@ function bindNavigation() {
   $("#detailSnapshotsBtn").addEventListener("click", () => {
     if (state.selectedMonitorId) showSnapshots(state.selectedMonitorId);
   });
+  $("#openDiscoveryBtn")?.addEventListener("click", openDiscoveryDialog);
   bindDetailHistoryControls();
   $$("[data-open-form]").forEach((button) => {
     button.addEventListener("click", () => openMonitorForm({ type: button.dataset.openForm }));
@@ -115,6 +117,9 @@ function bindForms() {
   $("#monitorForm").addEventListener("submit", saveMonitor);
   $("#cancelMonitorBtn").addEventListener("click", () => $("#monitorDialog").close());
   $("#testMonitorBtn").addEventListener("click", testMonitorFromForm);
+  $("#discoveryForm")?.addEventListener("submit", runDiscoveryScan);
+  $("#closeDiscoveryBtn")?.addEventListener("click", () => $("#discoveryDialog").close());
+  $("#importDiscoveryBtn")?.addEventListener("click", importDiscoverySelection);
   $("#groupForm").addEventListener("submit", saveGroup);
   $("#monitorTypeSelect").addEventListener("change", () => renderTypeFields($("#monitorTypeSelect").value));
   $("#monitorForm").addEventListener("input", updateConfigPreview);
@@ -705,6 +710,7 @@ function renderGroupOptions() {
     .map((group) => `<option value="${group.id}">${escapeHtml(group.name)}</option>`)
     .join("");
   $("#monitorGroupSelect").value = current;
+  renderDiscoveryResults();
   renderMonitorGroupFilterOptions();
 }
 
@@ -1000,6 +1006,132 @@ function csvNumbers(value) {
 
 function csvStrings(value) {
   return String(value || "").split(",").map((item) => item.trim()).filter(Boolean);
+}
+
+function openDiscoveryDialog() {
+  const form = $("#discoveryForm");
+  form?.reset();
+  if (form?.elements.timeout_seconds) form.elements.timeout_seconds.value = "3";
+  if (form?.elements.max_hosts) form.elements.max_hosts.value = "64";
+  state.discoveryProposals = [];
+  renderDiscoveryResults();
+  $("#discoveryDialog")?.showModal();
+}
+
+async function runDiscoveryScan(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const sources = [];
+  if (form.elements.source_home_assistant.checked) sources.push("home_assistant");
+  if (form.elements.source_network.checked) sources.push("network");
+  if (form.elements.source_docker.checked) sources.push("docker");
+  if (form.elements.source_unifi.checked) sources.push("unifi");
+  if (!sources.length) {
+    toast("Wybierz przynajmniej jedno zrodlo discovery.", "error");
+    return;
+  }
+  $("#discoverySummary").textContent = "Skanowanie...";
+  $("#runDiscoveryBtn").disabled = true;
+  $("#importDiscoveryBtn").disabled = true;
+  try {
+    state.discoveryProposals = await api("/api/discovery/scan", {
+      method: "POST",
+      body: JSON.stringify({
+        sources,
+        network_cidr: form.elements.network_cidr.value.trim() || null,
+        timeout_seconds: Number(form.elements.timeout_seconds.value || 3),
+        max_hosts: Number(form.elements.max_hosts.value || 64),
+      }),
+    });
+    renderDiscoveryResults();
+  } finally {
+    $("#runDiscoveryBtn").disabled = false;
+    $("#importDiscoveryBtn").disabled = false;
+  }
+}
+
+function renderDiscoveryResults() {
+  const root = $("#discoveryResults");
+  const summary = $("#discoverySummary");
+  if (!root || !summary) return;
+  const proposals = state.discoveryProposals || [];
+  const duplicates = proposals.filter((item) => item.duplicate_of_monitor_id).length;
+  summary.textContent = proposals.length ? `${proposals.length} propozycji, ${duplicates} duplikatow` : "Brak wynikow";
+  if (!proposals.length) {
+    root.className = "list empty";
+    root.textContent = "Uruchom skanowanie, aby zobaczyc propozycje.";
+    return;
+  }
+  root.className = "discovery-results";
+  root.innerHTML = proposals.map((proposal, index) => `
+    <article class="discovery-item ${proposal.duplicate_of_monitor_id ? "duplicate" : ""}" data-discovery-index="${index}">
+      <label class="check discovery-check">
+        <input data-discovery-field="selected" type="checkbox" ${proposal.duplicate_of_monitor_id ? "" : "checked"} />
+        ${proposal.duplicate_of_monitor_id ? `Duplikat #${proposal.duplicate_of_monitor_id}` : "Importuj"}
+      </label>
+      <label>Nazwa<input data-discovery-field="name" value="${escapeHtml(proposal.name)}" maxlength="120" /></label>
+      <label>Typ<select data-discovery-field="type">${discoveryTypeOptions(proposal.type)}</select></label>
+      <label>Target<input data-discovery-field="target" value="${escapeHtml(proposal.target)}" maxlength="2048" /></label>
+      <label>Grupa<select data-discovery-field="group_id">${discoveryGroupOptions(proposal.group_id)}</select></label>
+      <small>${escapeHtml(proposal.reason || "")} · confidence ${Math.round(Number(proposal.confidence || 0) * 100)}%</small>
+    </article>
+  `).join("");
+  $$("[data-discovery-field]", root).forEach((input) => {
+    input.addEventListener("input", updateDiscoveryProposalFromInput);
+    input.addEventListener("change", updateDiscoveryProposalFromInput);
+  });
+}
+
+function discoveryTypeOptions(current) {
+  return state.monitorTypes
+    .map((type) => `<option value="${escapeHtml(type.type)}" ${type.type === current ? "selected" : ""}>${escapeHtml(type.label || type.type)}</option>`)
+    .join("");
+}
+
+function discoveryGroupOptions(current) {
+  return '<option value="">Bez grupy</option>' + state.groups
+    .map((group) => `<option value="${group.id}" ${String(group.id) === String(current || "") ? "selected" : ""}>${escapeHtml(group.name)}</option>`)
+    .join("");
+}
+
+function updateDiscoveryProposalFromInput(event) {
+  const item = event.currentTarget.closest("[data-discovery-index]");
+  if (!item) return;
+  const proposal = state.discoveryProposals[Number(item.dataset.discoveryIndex)];
+  if (!proposal) return;
+  const field = event.currentTarget.dataset.discoveryField;
+  if (field === "selected") proposal.selected = event.currentTarget.checked;
+  else if (field === "group_id") proposal.group_id = event.currentTarget.value ? Number(event.currentTarget.value) : null;
+  else proposal[field] = event.currentTarget.value.trim();
+}
+
+async function importDiscoverySelection() {
+  const selected = (state.discoveryProposals || [])
+    .filter((proposal) => proposal.selected !== false && !proposal.duplicate_of_monitor_id)
+    .map((proposal) => ({
+      type: proposal.type,
+      name: proposal.name,
+      target: proposal.target,
+      group_id: proposal.group_id || null,
+      interval_seconds: proposal.interval_seconds || null,
+      enabled: true,
+      test_on_save: false,
+      config: proposal.config || {},
+      confidence: proposal.confidence,
+      reason: proposal.reason,
+      duplicate_of_monitor_id: proposal.duplicate_of_monitor_id || null,
+    }));
+  if (!selected.length) {
+    toast("Zaznacz propozycje bez duplikatow do importu.", "error");
+    return;
+  }
+  const result = await api("/api/discovery/import", {
+    method: "POST",
+    body: JSON.stringify({ monitors: selected }),
+  });
+  $("#discoveryDialog").close();
+  toast(`Zaimportowano ${result.created} monitorow.`);
+  await refreshAll();
 }
 
 function filterMonitorsForList(monitors) {

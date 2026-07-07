@@ -4,6 +4,12 @@ All notable changes to the **Monitoring Center** Home Assistant add-on are docum
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-07-07
+
+### Added
+
+- Added discovery scans for Home Assistant entities, local networks, Docker hosts, and UniFi/SNMP seeds with explicit user-selected import.
+
 ## [0.7.11] - 2026-07-07
 
 ### Fixed

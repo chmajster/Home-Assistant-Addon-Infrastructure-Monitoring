@@ -28,6 +28,15 @@ class HomeAssistantClient:
     def available(self) -> bool:
         return bool(self.token)
 
+    async def list_states(self, timeout: float = 10.0) -> list[dict[str, Any]]:
+        if not self.available:
+            return []
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.get(f"{self.base_url}/states", headers=self._headers)
+            response.raise_for_status()
+            data = response.json()
+        return data if isinstance(data, list) else []
+
     async def publish_monitor_state(self, monitor: dict[str, Any]) -> None:
         if not self.config.publish_home_assistant_entities or not self.available:
             return

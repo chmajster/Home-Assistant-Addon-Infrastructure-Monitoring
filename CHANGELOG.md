@@ -6,6 +6,12 @@ Format opiera się na konwencji Keep a Changelog, a wersjonowanie dodatku powinn
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-07-07
+
+### Added
+
+- Dodano discovery/propozycje monitorow dla encji Home Assistant, sieci lokalnej, hostow Docker oraz konfiguracji UniFi/SNMP z importem tylko po jawnym wyborze uzytkownika.
+
 ## [0.7.11] - 2026-07-07
 
 ### Fixed

@@ -16,4 +16,8 @@ Nowe typy monitorow sa dodawane w istniejacym widoku **Monitoring** jako pluginy
 Obejmuja m.in. SSH/Bash, Docker, Linux host health, dyski, backupy, Home Assistant health, Pi-hole,
 UniFi/SNMP, log regex oraz pliki/katalogi. Nie sa tworzone osobne glowne sekcje dla SSH, Docker ani Backup.
 
+Discovery w widoku **Monitoring** potrafi zaproponowac monitory z encji Home Assistant, zakresu sieci CIDR,
+istniejacych hostow Docker oraz konfiguracji UniFi/SNMP. Propozycje nie sa zapisywane automatycznie; wymagaja
+zaznaczenia i importu przez uzytkownika.
+
 Historia zmian: [CHANGELOG.md](CHANGELOG.md).

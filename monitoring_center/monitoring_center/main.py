@@ -19,7 +19,18 @@ from .ha import HomeAssistantClient
 from .logging_config import configure_logging
 from .migrations import migrate
 from .monitoring import MonitorService
-from .schemas import GroupIn, GroupUpdate, MaintenanceIn, MonitorIn, MonitorsImportIn, MonitorUpdate, SettingsIn
+from .schemas import (
+    DiscoveryImportIn,
+    DiscoveryScanIn,
+    GroupIn,
+    GroupUpdate,
+    MaintenanceIn,
+    MonitorIn,
+    MonitorsImportIn,
+    MonitorUpdate,
+    SettingsIn,
+    TopologyIn,
+)
 
 config = AppConfig.load()
 configure_logging(config.log_level, config.log_file)
@@ -160,6 +171,19 @@ async def import_monitors(payload: MonitorsImportIn) -> dict[str, Any]:
     return {"created": len(monitors), "monitors": monitors}
 
 
+@app.post("/api/discovery/scan")
+async def discovery_scan(payload: DiscoveryScanIn) -> list[dict[str, Any]]:
+    data = payload.model_dump()
+    data["sources"] = payload.normalized_sources()
+    return await service.scan_discovery(data)
+
+
+@app.post("/api/discovery/import")
+async def discovery_import(payload: DiscoveryImportIn) -> dict[str, Any]:
+    monitors = await service.import_discovery([monitor.model_dump() for monitor in payload.monitors])
+    return {"created": len(monitors), "monitors": monitors}
+
+
 @app.put("/api/monitors/{monitor_id}")
 async def update_monitor(monitor_id: int, payload: MonitorUpdate) -> dict[str, Any]:
     try:
@@ -290,6 +314,23 @@ async def update_settings(payload: SettingsIn) -> dict[str, Any]:
 @app.get("/api/diagnostics")
 async def diagnostics() -> dict[str, Any]:
     return service.diagnostics()
+
+
+@app.get("/api/topology")
+async def get_topology() -> dict[str, Any]:
+    return service.get_topology()
+
+
+@app.put("/api/topology")
+async def put_topology(payload: TopologyIn) -> dict[str, Any]:
+    data = payload.model_dump()
+    data["nodes"] = [{**node, "type": payload.nodes[index].normalized_type()} for index, node in enumerate(data["nodes"])]
+    return service.save_topology(data)
+
+
+@app.post("/api/topology/auto-layout")
+async def topology_auto_layout() -> dict[str, Any]:
+    return service.auto_layout_topology()
 
 
 @app.get("/api/diagnostics/full")

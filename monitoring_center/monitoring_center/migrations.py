@@ -4,7 +4,7 @@ import shutil
 
 from .database import Database, dumps_json, loads_json
 
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 
 
 def migrate(db: Database) -> None:
@@ -48,6 +48,9 @@ def migrate(db: Database) -> None:
     if version < 9:
         _migration_009(db)
         db.execute("INSERT INTO schema_migrations(version) VALUES (?)", (9,))
+    if version < 10:
+        _migration_010(db)
+        db.execute("INSERT INTO schema_migrations(version) VALUES (?)", (10,))
 
 
 def _backup_database(db: Database) -> None:
@@ -360,5 +363,47 @@ def _migration_009(db: Database) -> None:
             ON incidents(status, started_at DESC);
         CREATE INDEX IF NOT EXISTS idx_incidents_open
             ON incidents(monitor_id, status, ended_at);
+        """
+    )
+
+
+def _migration_010(db: Database) -> None:
+    db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS topology_nodes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            type TEXT NOT NULL DEFAULT 'other',
+            monitor_id INTEGER,
+            icon TEXT,
+            x REAL NOT NULL DEFAULT 0,
+            y REAL NOT NULL DEFAULT 0,
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+            FOREIGN KEY(monitor_id) REFERENCES monitors(id) ON DELETE SET NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_topology_nodes_monitor
+            ON topology_nodes(monitor_id);
+        CREATE INDEX IF NOT EXISTS idx_topology_nodes_type
+            ON topology_nodes(type);
+
+        CREATE TABLE IF NOT EXISTS topology_edges (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            source_node_id INTEGER NOT NULL,
+            target_node_id INTEGER NOT NULL,
+            label TEXT,
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+            FOREIGN KEY(source_node_id) REFERENCES topology_nodes(id) ON DELETE CASCADE,
+            FOREIGN KEY(target_node_id) REFERENCES topology_nodes(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_topology_edges_source
+            ON topology_edges(source_node_id);
+        CREATE INDEX IF NOT EXISTS idx_topology_edges_target
+            ON topology_edges(target_node_id);
         """
     )

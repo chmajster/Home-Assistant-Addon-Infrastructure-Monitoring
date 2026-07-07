@@ -13,6 +13,7 @@ from fastapi import HTTPException
 from . import __version__
 from .config import AppConfig
 from .database import Database, dumps_json, loads_json
+from .discovery import DiscoveryService
 from .ha import HomeAssistantClient
 from .monitor_types import PRESETS, get_plugin, list_types, resolve_type
 from .monitor_types.base import CheckResult, MonitorContext, is_success_status
@@ -21,6 +22,16 @@ from .validators import normalize_url_key
 
 LOGGER = logging.getLogger(__name__)
 URL_MONITOR_TYPES = {"http_status", "http_hash", "rest_api"}
+TOPOLOGY_TYPE_ORDER = {
+    "internet": 0,
+    "router": 1,
+    "switch": 2,
+    "ap": 3,
+    "server": 4,
+    "service": 4,
+    "iot": 5,
+    "other": 5,
+}
 
 
 def utc_now() -> str:
@@ -45,6 +56,7 @@ class MonitorService:
         self.db = db
         self.config = config
         self.ha = ha
+        self.discovery = DiscoveryService(ha)
         self._apply_persisted_settings()
         self.running: set[int] = set()
         self.active_checks: set[int] = set()
@@ -184,6 +196,78 @@ class MonitorService:
     def get_presets(self) -> list[dict[str, Any]]:
         return PRESETS
 
+    def get_topology(self) -> dict[str, Any]:
+        monitors = {int(monitor["id"]): monitor for monitor in self.list_monitors()}
+        nodes = [self._hydrate_topology_node(row, monitors) for row in self.db.fetchall("SELECT * FROM topology_nodes ORDER BY id")]
+        edges = [
+            {
+                "id": row["id"],
+                "source_node_id": row["source_node_id"],
+                "target_node_id": row["target_node_id"],
+                "label": row.get("label"),
+                "metadata": loads_json(row.get("metadata_json"), {}),
+            }
+            for row in self.db.fetchall("SELECT * FROM topology_edges ORDER BY id")
+        ]
+        return {"nodes": nodes, "edges": edges}
+
+    def save_topology(self, payload: dict[str, Any]) -> dict[str, Any]:
+        nodes = payload.get("nodes") or []
+        edges = payload.get("edges") or []
+        old_to_new: dict[int, int] = {}
+        with self.db.transaction():
+            self.db.execute("DELETE FROM topology_edges")
+            self.db.execute("DELETE FROM topology_nodes")
+            for node in nodes:
+                old_id = int(node["id"]) if node.get("id") else None
+                cursor = self.db.execute(
+                    """
+                    INSERT INTO topology_nodes(name, type, monitor_id, icon, x, y, metadata_json)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        str(node["name"]).strip(),
+                        node.get("type") or "other",
+                        node.get("monitor_id"),
+                        node.get("icon"),
+                        float(node.get("x") or 0),
+                        float(node.get("y") or 0),
+                        dumps_json(node.get("metadata") or {}),
+                    ),
+                )
+                new_id = int(cursor.lastrowid)
+                if old_id is not None:
+                    old_to_new[old_id] = new_id
+            for edge in edges:
+                source = old_to_new.get(int(edge["source_node_id"]), int(edge["source_node_id"]))
+                target = old_to_new.get(int(edge["target_node_id"]), int(edge["target_node_id"]))
+                if source not in old_to_new.values() or target not in old_to_new.values():
+                    continue
+                self.db.execute(
+                    """
+                    INSERT INTO topology_edges(source_node_id, target_node_id, label, metadata_json)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    (source, target, edge.get("label"), dumps_json(edge.get("metadata") or {})),
+                )
+        return self.get_topology()
+
+    def auto_layout_topology(self) -> dict[str, Any]:
+        topology = self.get_topology()
+        nodes = topology["nodes"]
+        if not nodes:
+            return topology
+        layers: dict[int, list[dict[str, Any]]] = {}
+        for node in nodes:
+            layer = TOPOLOGY_TYPE_ORDER.get(node.get("type") or "other", TOPOLOGY_TYPE_ORDER["other"])
+            layers.setdefault(layer, []).append(node)
+        for layer_index, layer in sorted(layers.items()):
+            count = len(layer)
+            for index, node in enumerate(layer):
+                node["x"] = 90 + layer_index * 170
+                node["y"] = 80 + index * 110 + max(0, 3 - count) * 35
+        return self.save_topology({"nodes": nodes, "edges": topology["edges"]})
+
     async def create_monitor(self, payload: dict[str, Any]) -> dict[str, Any]:
         monitor = self._normalize_payload(payload)
         self._ensure_unique_url_monitor(monitor)
@@ -203,6 +287,26 @@ class MonitorService:
                 self._ensure_unique_url_monitor(monitor)
                 created_ids.append(self._insert_monitor(monitor))
         return [self.get_monitor(monitor_id) for monitor_id in created_ids]
+
+    async def scan_discovery(self, payload: dict[str, Any]) -> list[dict[str, Any]]:
+        return await self.discovery.scan(payload, self.list_monitors(include_secrets=True))
+
+    async def import_discovery(self, payloads: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        sanitized = []
+        for payload in payloads:
+            sanitized.append(
+                {
+                    "type": payload["type"],
+                    "name": payload["name"],
+                    "target": payload["target"],
+                    "interval_seconds": payload.get("interval_seconds"),
+                    "group_id": payload.get("group_id"),
+                    "enabled": payload.get("enabled", True),
+                    "test_on_save": False,
+                    "config": payload.get("config") or {},
+                }
+            )
+        return await self.create_monitors_bulk(sanitized)
 
     async def update_monitor(self, monitor_id: int, payload: dict[str, Any]) -> dict[str, Any]:
         current = self.get_monitor(monitor_id, include_secrets=True)
@@ -1302,6 +1406,32 @@ class MonitorService:
             "config": config,
         }
 
+    @staticmethod
+    def _hydrate_topology_node(row: dict[str, Any], monitors: dict[int, dict[str, Any]]) -> dict[str, Any]:
+        monitor_id = row.get("monitor_id")
+        monitor = monitors.get(int(monitor_id)) if monitor_id is not None else None
+        status = monitor.get("status") if monitor else "neutral"
+        return {
+            "id": row["id"],
+            "name": row["name"],
+            "type": row.get("type") or "other",
+            "monitor_id": monitor_id,
+            "icon": row.get("icon") or _topology_icon(row.get("type") or "other"),
+            "x": float(row.get("x") or 0),
+            "y": float(row.get("y") or 0),
+            "metadata": loads_json(row.get("metadata_json"), {}),
+            "status": status or "neutral",
+            "monitor": {
+                "id": monitor["id"],
+                "name": monitor["name"],
+                "type": monitor["type"],
+                "target": monitor["target"],
+                "enabled": monitor["enabled"],
+            }
+            if monitor
+            else None,
+        }
+
     def _insert_monitor(self, monitor: dict[str, Any]) -> int:
         cursor = self.db.execute(
             """
@@ -1476,3 +1606,16 @@ def _safe_int(value: object, default: int, minimum: int = 1) -> int:
     except (TypeError, ValueError):
         number = default
     return max(number, minimum)
+
+
+def _topology_icon(node_type: str) -> str:
+    return {
+        "internet": "cloud",
+        "router": "router",
+        "switch": "network",
+        "ap": "wifi",
+        "server": "server",
+        "iot": "cpu",
+        "service": "box",
+        "other": "circle",
+    }.get(node_type, "circle")
