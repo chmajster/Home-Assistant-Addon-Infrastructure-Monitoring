@@ -1,19 +1,98 @@
-name: CI
+name: Check
 
 on:
   push:
   pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  test:
+  python-check:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          python-version: "3.13"
-      - run: python -m pip install --upgrade pip
-      - run: pip install -r monitoring_center/requirements.txt pytest ruff mypy
-      - run: ruff check .
-      - run: mypy monitoring_center/monitoring_center
-      - run: pytest
+          python-version: '3.13'
+
+      - name: Cache pip dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install dependencies
+        run: |
+          pip install -r monitoring_center/requirements.txt
+          pip install pytest ruff mypy
+
+      - name: Run ruff format check
+        run: ruff format --check .
+
+      - name: Run ruff lint check
+        run: ruff check .
+
+      - name: Run mypy type checking
+        run: mypy monitoring_center/monitoring_center
+      - name: Run pytest
+        run: pytest -q
+
+  addon-structure-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify required files exist
+        run: |
+          test -f repository.yaml || (echo "Error: repository.yaml not found" && exit 1)
+          test -f monitoring_center/config.yaml || (echo "Error: monitoring_center/config.yaml not found" && exit 1)
+          test -f monitoring_center/Dockerfile || (echo "Error: monitoring_center/Dockerfile not found" && exit 1)
+          test -f monitoring_center/run.sh || (echo "Error: monitoring_center/run.sh not found" && exit 1)
+          test -f monitoring_center/requirements.txt || (echo "Error: monitoring_center/requirements.txt not found" && exit 1)
+
+      - name: Verify config.yaml structure
+        run: |
+          # Check for required fields in config.yaml
+          Select-String -Pattern "name:" monitoring_center/config.yaml | Out-Null || (Write-Host "Error: config.yaml missing 'name' field" && exit 1)
+          Select-String -Pattern "version:" monitoring_center/config.yaml | Out-Null || (Write-Host "Error: config.yaml missing 'version' field" && exit 1)
+          Select-String -Pattern "slug:" monitoring_center/config.yaml | Out-Null || (Write-Host "Error: config.yaml missing 'slug' field" && exit 1)
+          Select-String -Pattern "description:" monitoring_center/config.yaml | Out-Null || (Write-Host "Error: config.yaml missing 'description' field" && exit 1)
+          Select-String -Pattern "arch:" monitoring_center/config.yaml | Out-Null || (Write-Host "Error: config.yaml missing 'arch' field" && exit 1)
+          Select-String -Pattern "startup:" monitoring_center/config.yaml | Out-Null || (Write-Host "Error: config.yaml missing 'startup' field" && exit 1)
+          Select-String -Pattern "boot:" monitoring_center/config.yaml | Out-Null || (Write-Host "Error: config.yaml missing 'boot' field" && exit 1)
+          Select-String -Pattern "ingress:" monitoring_center/config.yaml | Out-Null || (Write-Host "Error: config.yaml missing 'ingress' field" && exit 1)
+          Select-String -Pattern "options:" monitoring_center/config.yaml | Out-Null || (Write-Host "Error: config.yaml missing 'options' field" && exit 1)
+          Select-String -Pattern "schema:" monitoring_center/config.yaml | Out-Null || (Write-Host "Error: config.yaml missing 'schema' field" && exit 1)
+
+      - name: Install yamllint
+        run: pip install yamllint
+
+      - name: Run yamllint on YAML files
+        run: |
+          Get-ChildItem -Recurse -Filter "*.yaml" -Path . | ForEach-Object { yamllint $_.FullName }
+          Get-ChildItem -Recurse -Filter "*.yml" -Path . | ForEach-Object { yamllint $_.FullName }
+
+  docker-build-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: |
+          docker build \
+            --file monitoring_center/Dockerfile \
+            --context monitoring_center \
+            --build-arg BUILD_ARCH=amd64 \
+            --build-arg BUILD_VERSION=ci \
+            --build-arg BUILD_REVISION=${{ github.sha }}
+
