@@ -1,7 +1,7 @@
 ARG BUILD_ARCH=amd64
 FROM ghcr.io/home-assistant/${BUILD_ARCH}-base-python:3.13-alpine3.24
 
-ARG BUILD_VERSION=0.7.9
+ARG BUILD_VERSION=0.7.11
 ARG BUILD_ARCH=amd64
 ARG BUILD_REVISION=local
 
@@ -17,6 +17,9 @@ LABEL \
   org.opencontainers.image.description="Local network and website monitoring center for Home Assistant"
 
 WORKDIR /app
+
+ENV PIP_NO_INDEX=1 \
+  PIP_FIND_LINKS=/wheels
 
 COPY requirements.txt /app/
 COPY wheels /wheels

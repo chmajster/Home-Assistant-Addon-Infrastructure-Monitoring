@@ -6,6 +6,18 @@ Format opiera się na konwencji Keep a Changelog, a wersjonowanie dodatku powinn
 
 ## [Unreleased]
 
+## [0.7.11] - 2026-07-07
+
+### Fixed
+
+- Dodano zmienne srodowiskowe pip dla trybu offline, aby build dodatku nie dziedziczyl indeksow pakietow.
+
+## [0.7.10] - 2026-07-07
+
+### Fixed
+
+- Naprawiono offline buildy Supervisora przez wymuszenie instalacji pip z dolaczonego wheelhouse oraz dodanie brakujacych zaleznosci SSH/SNMP.
+
 ## [0.7.9] - 2026-07-03
 
 ### Changed

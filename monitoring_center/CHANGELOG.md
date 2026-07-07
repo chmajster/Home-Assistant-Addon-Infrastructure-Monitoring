@@ -4,6 +4,18 @@ All notable changes to the **Monitoring Center** Home Assistant add-on are docum
 
 ## [Unreleased]
 
+## [0.7.11] - 2026-07-07
+
+### Fixed
+
+- Added pip offline environment settings to prevent inherited package indexes during add-on builds.
+
+## [0.7.10] - 2026-07-07
+
+### Fixed
+
+- Fixed offline Supervisor builds by forcing pip to use the bundled wheelhouse and adding missing SSH/SNMP dependency wheels.
+
 ## [0.7.9] - 2026-07-03
 
 ### Changed
