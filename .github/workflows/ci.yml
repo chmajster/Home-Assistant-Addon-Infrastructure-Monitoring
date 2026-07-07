@@ -91,7 +91,8 @@ jobs:
         run: |
           docker build \
             --file monitoring_center/Dockerfile \
-            --context monitoring_center \
+
+            --context . \
             --build-arg BUILD_ARCH=amd64 \
             --build-arg BUILD_VERSION=ci \
             --build-arg BUILD_REVISION=${{ github.sha }}
