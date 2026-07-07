@@ -44,6 +44,7 @@ jobs:
 
       - name: Run mypy type checking
         run: mypy monitoring_center/monitoring_center
+
       - name: Run pytest
         run: pytest -q
 
@@ -91,7 +92,6 @@ jobs:
         run: |
           docker build \
             --file monitoring_center/Dockerfile \
-
             --context . \
             --build-arg BUILD_ARCH=amd64 \
             --build-arg BUILD_VERSION=ci \
