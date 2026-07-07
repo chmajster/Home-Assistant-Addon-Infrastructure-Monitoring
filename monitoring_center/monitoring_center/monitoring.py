@@ -3,6 +3,10 @@ from __future__ import annotations
 import asyncio
 import difflib
 import logging
+import math
+import os
+import platform
+import statistics
 import sys
 import time
 from datetime import UTC, datetime, timedelta
@@ -22,6 +26,14 @@ from .validators import normalize_url_key
 
 LOGGER = logging.getLogger(__name__)
 URL_MONITOR_TYPES = {"http_status", "http_hash", "rest_api"}
+ANOMALY_METRICS = (
+    "response_ms",
+    "disk_usage_percent",
+    "directory_size_bytes",
+    "file_count",
+    "packet_loss",
+    "dns_lookup_ms",
+)
 TOPOLOGY_TYPE_ORDER = {
     "internet": 0,
     "router": 1,
@@ -198,7 +210,10 @@ class MonitorService:
 
     def get_topology(self) -> dict[str, Any]:
         monitors = {int(monitor["id"]): monitor for monitor in self.list_monitors()}
-        nodes = [self._hydrate_topology_node(row, monitors) for row in self.db.fetchall("SELECT * FROM topology_nodes ORDER BY id")]
+        nodes = [
+            self._hydrate_topology_node(row, monitors)
+            for row in self.db.fetchall("SELECT * FROM topology_nodes ORDER BY id")
+        ]
         edges = [
             {
                 "id": row["id"],
@@ -254,6 +269,8 @@ class MonitorService:
 
     def auto_layout_topology(self) -> dict[str, Any]:
         topology = self.get_topology()
+        if not topology["nodes"]:
+            topology = self._seed_topology_from_monitors()
         nodes = topology["nodes"]
         if not nodes:
             return topology
@@ -267,6 +284,49 @@ class MonitorService:
                 node["x"] = 90 + layer_index * 170
                 node["y"] = 80 + index * 110 + max(0, 3 - count) * 35
         return self.save_topology({"nodes": nodes, "edges": topology["edges"]})
+
+    def _seed_topology_from_monitors(self) -> dict[str, Any]:
+        monitors = self.list_monitors()
+        nodes: list[dict[str, Any]] = [
+            {
+                "id": -1,
+                "name": "Internet",
+                "type": "internet",
+                "monitor_id": None,
+                "icon": "cloud",
+                "x": 0,
+                "y": 0,
+                "metadata": {},
+            },
+            {
+                "id": -2,
+                "name": "Router",
+                "type": "router",
+                "monitor_id": None,
+                "icon": "router",
+                "x": 0,
+                "y": 0,
+                "metadata": {},
+            },
+        ]
+        edges = [{"source_node_id": -1, "target_node_id": -2, "label": "WAN", "metadata": {}}]
+        for index, monitor in enumerate(monitors, start=3):
+            node_id = -index
+            node_type = _infer_topology_type(monitor)
+            nodes.append(
+                {
+                    "id": node_id,
+                    "name": monitor["name"],
+                    "type": node_type,
+                    "monitor_id": monitor["id"],
+                    "icon": _topology_icon(node_type),
+                    "x": 0,
+                    "y": 0,
+                    "metadata": {"target": monitor.get("target")},
+                }
+            )
+            edges.append({"source_node_id": -2, "target_node_id": node_id, "label": "", "metadata": {}})
+        return {"nodes": nodes, "edges": edges}
 
     async def create_monitor(self, payload: dict[str, Any]) -> dict[str, Any]:
         monitor = self._normalize_payload(payload)
@@ -425,6 +485,7 @@ class MonitorService:
         monitor = self.get_monitor(monitor_id, include_secrets=True)
         previous_status = monitor["status"]
         result = await self._check(monitor)
+        result = self._apply_anomaly_detection(monitor, result)
         final_status, failure_count, recovery_count, threshold_pending = self._status_after_thresholds(
             monitor,
             result.status,
@@ -590,6 +651,161 @@ class MonitorService:
                 return raw_status, 0, recovery_count, False
             return previous_status, failure_count, recovery_count, True
         return raw_status, 0, recovery_count, False
+
+    def _apply_anomaly_detection(self, monitor: dict[str, Any], result: CheckResult) -> CheckResult:
+        config = monitor.get("config") or {}
+        if not config.get("anomaly_detection_enabled") or not monitor.get("id"):
+            return result
+        details = dict(result.details or {})
+        min_samples = _safe_int(config.get("anomaly_min_samples"), 12, 2)
+        anomalies: list[dict[str, Any]] = []
+        strongest_status: str | None = None
+        for metric, current in self._anomaly_candidate_values(result, details).items():
+            if current is None or not math.isfinite(current):
+                continue
+            baseline = self.metric_baseline(
+                int(monitor["id"]),
+                metric,
+                window_hours=max(_safe_float(config.get("anomaly_window_hours"), 24), 1),
+                min_samples=min_samples,
+            )
+            if not baseline:
+                continue
+            anomaly = self._score_anomaly(metric, current, baseline, config)
+            if not anomaly:
+                continue
+            anomalies.append(anomaly)
+            if anomaly["status"] == "error":
+                strongest_status = "error"
+            elif strongest_status != "error":
+                strongest_status = "warning"
+        if not anomalies:
+            return result
+
+        primary = anomalies[0]
+        details.update(
+            {
+                "baseline": primary["baseline"],
+                "current_value": primary["current_value"],
+                "anomaly_score": primary["anomaly_score"],
+                "anomaly_reason": primary["anomaly_reason"],
+                "anomaly_metric": primary["metric"],
+                "anomalies": anomalies,
+            }
+        )
+        result.details = details
+        if "monitor_anomaly_detected" not in result.events:
+            result.events.append("monitor_anomaly_detected")
+        if strongest_status == "error":
+            result.status = "error"
+            result.error = result.error or primary["anomaly_reason"]
+        elif strongest_status == "warning" and is_success_status(result.status):
+            result.status = "warning"
+            result.error = result.error or primary["anomaly_reason"]
+        return result
+
+    @staticmethod
+    def _anomaly_candidate_values(result: CheckResult, details: dict[str, Any]) -> dict[str, float | None]:
+        return {
+            "response_ms": _optional_float(result.response_ms),
+            "disk_usage_percent": _first_float(details, "disk_usage_percent", "used_percent"),
+            "directory_size_bytes": _directory_size_bytes(details),
+            "file_count": _first_float(details, "file_count"),
+            "packet_loss": _optional_float(result.packet_loss)
+            if result.packet_loss is not None
+            else _first_float(details, "packet_loss", "packet_loss_percent"),
+            "dns_lookup_ms": _first_float(details, "dns_lookup_ms"),
+        }
+
+    def _score_anomaly(
+        self,
+        metric: str,
+        current: float,
+        baseline: dict[str, Any],
+        config: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        mean = float(baseline["mean"])
+        stddev = float(baseline["stddev"])
+        multiplier = max(_safe_float(config.get("anomaly_stddev_multiplier"), 3), 0)
+        warn_percent = max(_safe_float(config.get("anomaly_warn_percent_over_baseline"), 50), 0)
+        error_percent = max(_safe_float(config.get("anomaly_error_percent_over_baseline"), 100), warn_percent)
+        warn_threshold = max(mean * (1 + warn_percent / 100), mean + stddev * multiplier)
+        error_threshold = max(mean * (1 + error_percent / 100), mean + stddev * multiplier * 1.5)
+        if current <= warn_threshold:
+            return None
+        percent_over = ((current - mean) / mean * 100) if mean > 0 else 0
+        z_score = ((current - mean) / stddev) if stddev > 0 else (math.inf if current > mean else 0)
+        status = "error" if current >= error_threshold else "warning"
+        reason = f"{metric} {current:.2f} przekracza baseline {mean:.2f} o {percent_over:.1f}% ({status})"
+        return {
+            "metric": metric,
+            "status": status,
+            "baseline": baseline,
+            "current_value": round(current, 4),
+            "anomaly_score": round(float(z_score if math.isfinite(z_score) else 999), 4),
+            "anomaly_reason": reason,
+            "thresholds": {"warning": round(warn_threshold, 4), "error": round(error_threshold, 4)},
+        }
+
+    def metric_baseline(
+        self,
+        monitor_id: int,
+        metric: str,
+        *,
+        window_hours: float,
+        min_samples: int,
+    ) -> dict[str, Any] | None:
+        values = self._metric_history_values(monitor_id, metric, window_hours)
+        if len(values) < min_samples:
+            return None
+        sorted_values = sorted(values)
+        return {
+            "metric": metric,
+            "sample_count": len(values),
+            "mean": round(statistics.fmean(values), 4),
+            "median": round(statistics.median(sorted_values), 4),
+            "p95": round(_percentile(sorted_values, 0.95), 4),
+            "stddev": round(statistics.pstdev(values), 4),
+            "window_hours": window_hours,
+        }
+
+    def _metric_history_values(self, monitor_id: int, metric: str, window_hours: float) -> list[float]:
+        cutoff = (datetime.now(UTC) - timedelta(hours=window_hours)).replace(microsecond=0).isoformat()
+        rows = self.db.fetchall(
+            """
+            SELECT response_ms, packet_loss, details_json
+            FROM monitor_checks
+            WHERE monitor_id = ? AND checked_at >= ?
+            ORDER BY checked_at DESC, id DESC
+            """,
+            (monitor_id, cutoff),
+        )
+        values: list[float] = []
+        for row in rows:
+            details = loads_json(row.get("details_json"), {})
+            value = self._metric_value_from_check(metric, row, details)
+            if value is not None and math.isfinite(value):
+                values.append(value)
+        return values
+
+    @staticmethod
+    def _metric_value_from_check(metric: str, row: dict[str, Any], details: dict[str, Any]) -> float | None:
+        if metric == "response_ms":
+            return _optional_float(row.get("response_ms"))
+        if metric == "packet_loss":
+            packet_loss = _optional_float(row.get("packet_loss"))
+            if packet_loss is not None:
+                return packet_loss
+            return _first_float(details, "packet_loss", "packet_loss_percent")
+        if metric == "disk_usage_percent":
+            return _first_float(details, "disk_usage_percent", "used_percent")
+        if metric == "directory_size_bytes":
+            return _directory_size_bytes(details)
+        if metric == "file_count":
+            return _first_float(details, "file_count")
+        if metric == "dns_lookup_ms":
+            return _first_float(details, "dns_lookup_ms")
+        return None
 
     def _schedule_retry(self, monitor: dict[str, Any], details: dict[str, Any]) -> None:
         retry_delay = self._monitor_int_setting(monitor, "retry_delay_seconds", self.config.retry_delay_seconds, 0)
@@ -911,7 +1127,8 @@ class MonitorService:
         if filters.get("type"):
             clauses.append("m.type = ?")
             params.append(filters["type"])
-        if filters.get("status"):
+        anomaly_filter = str(filters.get("status") or "").lower() == "anomaly"
+        if filters.get("status") and not anomaly_filter:
             clauses.append("c.status = ?")
             params.append(filters["status"])
         if filters.get("from_date"):
@@ -936,6 +1153,9 @@ class MonitorService:
         for row in rows:
             details = loads_json(row.get("details_json"), {})
             row["severity"] = details.get("severity") or details.get("alert_severity")
+            row["anomaly"] = bool(details.get("anomaly_reason"))
+        if anomaly_filter:
+            rows = [row for row in rows if row.get("anomaly")]
         if filters.get("severity"):
             rows = [row for row in rows if str(row.get("severity") or "") == str(filters["severity"])]
         return rows
@@ -964,10 +1184,30 @@ class MonitorService:
             "avg_response_ms": round(float(avg["avg_response_ms"]), 2) if avg and avg["avg_response_ms"] else None,
             "recent_failures": recent_failures,
             "recent_changes": recent_changes,
+            "active_anomalies": self._active_anomaly_count(),
             "monitors": monitors,
             "groups": self.list_groups(),
             "slo": self.get_slo_stats(),
         }
+
+    def _active_anomaly_count(self) -> int:
+        rows = self.db.fetchall(
+            """
+            SELECT c.monitor_id, c.details_json
+            FROM monitor_checks c
+            JOIN (
+                SELECT monitor_id, MAX(id) AS latest_id
+                FROM monitor_checks
+                GROUP BY monitor_id
+            ) latest ON latest.latest_id = c.id
+            """
+        )
+        count = 0
+        for row in rows:
+            details = loads_json(row.get("details_json"), {})
+            if details.get("anomaly_reason"):
+                count += 1
+        return count
 
     def get_slo_stats(self, group_id: int | None = None, monitor_id: int | None = None) -> dict[str, Any]:
         windows = {"24h": 1, "7d": 7, "30d": 30, "90d": 90}
@@ -1323,6 +1563,15 @@ class MonitorService:
         if "last_output_hash" in details:
             config["last_output_hash"] = details["last_output_hash"]
             changed = True
+        if "anomaly_reason" in details:
+            config["last_anomaly"] = {
+                "metric": details.get("anomaly_metric"),
+                "baseline": details.get("baseline"),
+                "current_value": details.get("current_value"),
+                "anomaly_score": details.get("anomaly_score"),
+                "anomaly_reason": details.get("anomaly_reason"),
+            }
+            changed = True
         if "_alert_state" in details:
             config["_alert_state"] = details["_alert_state"]
             changed = True
@@ -1383,6 +1632,141 @@ class MonitorService:
             "log_file": str(self.config.log_file),
             "settings": self.get_settings(),
             "slo": self.get_slo_stats(),
+        }
+
+    async def full_diagnostics(self) -> dict[str, Any]:
+        data = self.diagnostics()
+        data.update(
+            {
+                "addon_version": __version__,
+                "process": self._process_usage(),
+                "wal_status": self._wal_status(),
+                "checks_last_24h": self._checks_last_24h(),
+                "avg_check_response_ms": self._avg_check_response_ms(),
+                "home_assistant_api": await self.ha.get_api_status(),
+                "data_writable": self._data_writable_status(),
+                "log_file_status": self._log_file_status(),
+            }
+        )
+        return data
+
+    async def run_self_check(self) -> dict[str, Any]:
+        checks = [
+            self._self_check_sqlite(),
+            self._self_check_data_path(),
+            await self._self_check_ha_api(),
+        ]
+        if self.config.publish_home_assistant_events:
+            checks.append(await self._self_check_ha_event())
+        if self.config.publish_home_assistant_entities:
+            checks.append(await self._self_check_ha_entity())
+        ok = all(item["ok"] for item in checks)
+        payload = sanitize_secrets(
+            {
+                "status": "ok" if ok else "error",
+                "checked_at": utc_now(),
+                "checks": checks,
+            }
+        )
+        self.db.execute(
+            """
+            INSERT INTO events(monitor_id, event_type, previous_state, new_state, payload_json, delivered_to_ha)
+            VALUES (NULL, 'diagnostics_self_check', NULL, ?, ?, 0)
+            """,
+            (payload["status"], dumps_json(payload)),
+        )
+        return payload
+
+    def _self_check_sqlite(self) -> dict[str, Any]:
+        try:
+            value = f"self-check-{time.time_ns()}"
+            self.db.execute("CREATE TEMP TABLE IF NOT EXISTS diagnostics_self_check(value TEXT)")
+            self.db.execute("DELETE FROM diagnostics_self_check")
+            self.db.execute("INSERT INTO diagnostics_self_check(value) VALUES (?)", (value,))
+            row = self.db.fetchone("SELECT value FROM diagnostics_self_check LIMIT 1")
+            return {"name": "sqlite_read_write", "ok": bool(row and row["value"] == value)}
+        except Exception as exc:
+            return {"name": "sqlite_read_write", "ok": False, "error": str(exc)}
+
+    def _self_check_data_path(self) -> dict[str, Any]:
+        path = self.config.database_path.parent / ".monitoring_center_self_check"
+        try:
+            value = f"self-check-{time.time_ns()}"
+            path.write_text(value, encoding="utf-8")
+            ok = path.read_text(encoding="utf-8") == value
+            path.unlink(missing_ok=True)
+            return {"name": "data_read_write", "ok": ok, "path": str(self.config.database_path.parent)}
+        except Exception as exc:
+            return {
+                "name": "data_read_write",
+                "ok": False,
+                "path": str(self.config.database_path.parent),
+                "error": str(exc),
+            }
+
+    async def _self_check_ha_api(self) -> dict[str, Any]:
+        status = await self.ha.get_api_status()
+        return {"name": "home_assistant_api", **status}
+
+    async def _self_check_ha_event(self) -> dict[str, Any]:
+        payload = {"source": "monitoring_center", "test": True, "created_at": utc_now()}
+        delivered = await self.ha.fire_event("monitoring_center_self_check", payload)
+        return {"name": "home_assistant_event_publish", "ok": bool(delivered), "enabled": True}
+
+    async def _self_check_ha_entity(self) -> dict[str, Any]:
+        entity_id = f"sensor.{self.config.entity_prefix}_self_check"
+        delivered = await self.ha.publish_test_state(
+            entity_id,
+            "ok",
+            {"friendly_name": "Monitoring Center Self Check", "checked_at": utc_now()},
+        )
+        return {"name": "home_assistant_entity_publish", "ok": bool(delivered), "enabled": True, "entity_id": entity_id}
+
+    def _process_usage(self) -> dict[str, Any]:
+        usage: dict[str, Any] = {
+            "pid": os.getpid(),
+            "platform": platform.platform(),
+            "python_version": sys.version.split()[0],
+            "uptime_seconds": max(0, int((datetime.now(UTC) - parse_time(self.started_at)).total_seconds()))
+            if parse_time(self.started_at)
+            else None,
+        }
+        try:
+            import resource
+
+            usage["max_rss_kb"] = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        except Exception:
+            usage["max_rss_kb"] = None
+        try:
+            times = os.times()
+            usage["cpu_seconds"] = round(float(times.user + times.system), 4)
+        except Exception:
+            usage["cpu_seconds"] = None
+        return usage
+
+    def _wal_status(self) -> dict[str, Any]:
+        wal_path = self.config.database_path.with_name(f"{self.config.database_path.name}-wal")
+        return {"exists": wal_path.exists(), "size_bytes": wal_path.stat().st_size if wal_path.exists() else 0}
+
+    def _checks_last_24h(self) -> int:
+        cutoff = (datetime.now(UTC) - timedelta(hours=24)).replace(microsecond=0).isoformat()
+        row = self.db.fetchone("SELECT COUNT(*) AS count FROM monitor_checks WHERE checked_at >= ?", (cutoff,))
+        return int(row["count"] if row else 0)
+
+    def _avg_check_response_ms(self) -> float | None:
+        row = self.db.fetchone("SELECT AVG(response_ms) AS value FROM monitor_checks WHERE response_ms IS NOT NULL")
+        return round(float(row["value"]), 2) if row and row["value"] is not None else None
+
+    def _data_writable_status(self) -> dict[str, Any]:
+        path = self.config.database_path.parent
+        return {"path": str(path), "ok": os.access(path, os.W_OK)}
+
+    def _log_file_status(self) -> dict[str, Any]:
+        return {
+            "path": str(self.config.log_file),
+            "exists": self.config.log_file.exists(),
+            "writable": os.access(self.config.log_file.parent, os.W_OK),
+            "size_bytes": self.config.log_file.stat().st_size if self.config.log_file.exists() else 0,
         }
 
     def _normalize_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -1482,6 +1866,18 @@ class MonitorService:
             normalized["alert_channels"] = [item.strip() for item in str(channels).split(",") if item.strip()]
         else:
             normalized["alert_channels"] = ["home_assistant_event"]
+        normalized["anomaly_detection_enabled"] = bool(normalized.get("anomaly_detection_enabled", False))
+        normalized["anomaly_window_hours"] = _safe_int(normalized.get("anomaly_window_hours"), 24, 1)
+        normalized["anomaly_min_samples"] = _safe_int(normalized.get("anomaly_min_samples"), 12, 2)
+        normalized["anomaly_stddev_multiplier"] = max(_safe_float(normalized.get("anomaly_stddev_multiplier"), 3), 0)
+        normalized["anomaly_warn_percent_over_baseline"] = max(
+            _safe_float(normalized.get("anomaly_warn_percent_over_baseline"), 50),
+            0,
+        )
+        normalized["anomaly_error_percent_over_baseline"] = max(
+            _safe_float(normalized.get("anomaly_error_percent_over_baseline"), 100),
+            normalized["anomaly_warn_percent_over_baseline"],
+        )
         return normalized
 
     def _ensure_unique_url_monitor(self, monitor: dict[str, Any], exclude_id: int | None = None) -> None:
@@ -1608,6 +2004,45 @@ def _safe_int(value: object, default: int, minimum: int = 1) -> int:
     return max(number, minimum)
 
 
+def _optional_float(value: object) -> float | None:
+    if value in (None, ""):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _first_float(source: dict[str, Any], *keys: str) -> float | None:
+    for key in keys:
+        value = _optional_float(source.get(key))
+        if value is not None:
+            return value
+    return None
+
+
+def _directory_size_bytes(details: dict[str, Any]) -> float | None:
+    direct = _first_float(details, "directory_size_bytes")
+    if direct is not None:
+        return direct
+    size_mb = _first_float(details, "size_mb")
+    return size_mb * 1024 * 1024 if size_mb is not None else None
+
+
+def _percentile(sorted_values: list[float], percentile: float) -> float:
+    if not sorted_values:
+        return 0
+    if len(sorted_values) == 1:
+        return sorted_values[0]
+    index = (len(sorted_values) - 1) * percentile
+    lower = math.floor(index)
+    upper = math.ceil(index)
+    if lower == upper:
+        return sorted_values[int(index)]
+    weight = index - lower
+    return sorted_values[lower] * (1 - weight) + sorted_values[upper] * weight
+
+
 def _topology_icon(node_type: str) -> str:
     return {
         "internet": "cloud",
@@ -1619,3 +2054,20 @@ def _topology_icon(node_type: str) -> str:
         "service": "box",
         "other": "circle",
     }.get(node_type, "circle")
+
+
+def _infer_topology_type(monitor: dict[str, Any]) -> str:
+    text = f"{monitor.get('name', '')} {monitor.get('target', '')} {monitor.get('type', '')}".lower()
+    if "router" in text or "gateway" in text:
+        return "router"
+    if "switch" in text:
+        return "switch"
+    if " ap" in f" {text}" or "wifi" in text or "unifi" in text:
+        return "ap"
+    if any(token in text for token in ["nas", "server", "docker", "linux", "ssh"]):
+        return "server"
+    if any(token in text for token in ["mqtt", "pihole", "ha_", "home assistant", "http", "rest"]):
+        return "service"
+    if any(token in text for token in ["sensor", "light", "switch.", "device_tracker"]):
+        return "iot"
+    return "other"

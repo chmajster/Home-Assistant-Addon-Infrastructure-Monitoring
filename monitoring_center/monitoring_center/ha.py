@@ -37,6 +37,33 @@ class HomeAssistantClient:
             data = response.json()
         return data if isinstance(data, list) else []
 
+    async def get_api_status(self, timeout: float = 5.0) -> dict[str, Any]:
+        if not self.available:
+            return {"ok": False, "available": False, "error": "SUPERVISOR_TOKEN is not available"}
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                response = await client.get(f"{self.base_url}/", headers=self._headers)
+                response.raise_for_status()
+            return {"ok": True, "available": True, "status_code": response.status_code}
+        except Exception as exc:  # pragma: no cover - depends on HA runtime
+            return {"ok": False, "available": True, "error": str(exc)}
+
+    async def publish_test_state(self, entity_id: str, state: Any, attributes: dict[str, Any]) -> bool:
+        if not self.available:
+            return False
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                response = await client.post(
+                    f"{self.base_url}/states/{entity_id}",
+                    headers=self._headers,
+                    json={"state": str(state), "attributes": attributes},
+                )
+                response.raise_for_status()
+            return True
+        except Exception as exc:  # pragma: no cover - network integration
+            LOGGER.warning("Failed to publish self-check entity %s: %s", entity_id, exc)
+            return False
+
     async def publish_monitor_state(self, monitor: dict[str, Any]) -> None:
         if not self.config.publish_home_assistant_entities or not self.available:
             return

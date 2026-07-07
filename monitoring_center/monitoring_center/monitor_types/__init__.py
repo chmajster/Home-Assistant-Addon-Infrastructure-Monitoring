@@ -17,6 +17,7 @@ from .integrations import (
 from .mqtt import MqttMonitor
 from .ping import PingHostMonitor
 from .rest_api import RestApiMonitor
+from .self_check import MonitoringCenterHealthMonitor
 from .ssh_command import SshCommandMonitor
 from .ssl_certificate import SslCertificateMonitor
 from .system import (
@@ -51,6 +52,7 @@ PLUGINS: dict[str, MonitorTypePlugin] = {
         RestApiMonitor(),
         HomeAssistantEntityMonitor(),
         MqttMonitor(),
+        MonitoringCenterHealthMonitor(),
         SshCommandMonitor(),
         DockerContainerMonitor(),
         DockerComposeServiceMonitor(),

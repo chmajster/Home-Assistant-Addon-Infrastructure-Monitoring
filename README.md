@@ -20,4 +20,13 @@ Discovery w widoku **Monitoring** potrafi zaproponowac monitory z encji Home Ass
 istniejacych hostow Docker oraz konfiguracji UniFi/SNMP. Propozycje nie sa zapisywane automatycznie; wymagaja
 zaznaczenia i importu przez uzytkownika.
 
+Widok **Topologia** pokazuje lokalna mape zaleznosci urzadzen i uslug. Node'y moga byc powiazane z monitorami,
+dziedzicza ich status, mozna je przeciagac, laczyc liniami i zapisac uklad w SQLite.
+
+Dynamiczne progi/anomaly detection licza baseline z historii monitora i wykrywaja nietypowe wzrosty czasu
+odpowiedzi, packet loss, DNS latency, uzycia dysku, rozmiaru katalogu oraz liczby plikow.
+
+Diagnostyka zawiera Self-check dodatku: aktywne testy SQLite, zapisu do `/data`, Home Assistant API,
+publikacji HA oraz monitor typu `monitoring_center_health` do monitorowania samego Monitoring Center.
+
 Historia zmian: [CHANGELOG.md](CHANGELOG.md).

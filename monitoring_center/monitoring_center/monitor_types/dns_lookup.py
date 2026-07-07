@@ -28,11 +28,14 @@ class DnsLookupMonitor:
             domain = monitor["target"].strip().rstrip(".")
             record_type = str(monitor["config"].get("record_type") or "A").upper()
             timeout = timeout_seconds_from_config(monitor["config"], context.config.default_timeout_minutes * 60)
+            started = asyncio.get_running_loop().time()
             records = await asyncio.wait_for(asyncio.to_thread(_resolve, domain, record_type), timeout=timeout)
+            elapsed_ms = (asyncio.get_running_loop().time() - started) * 1000
             previous = monitor["config"].get("last_dns_result")
             changed = bool(previous and previous != records)
             return CheckResult(
                 "ok",
+                response_ms=elapsed_ms,
                 content_changed=changed,
                 details={
                     "domain": domain,
@@ -40,6 +43,7 @@ class DnsLookupMonitor:
                     "records": records,
                     "previous_records": previous,
                     "dns_changed": changed,
+                    "dns_lookup_ms": elapsed_ms,
                 },
                 events=["dns_record_changed"] if changed else [],
             )

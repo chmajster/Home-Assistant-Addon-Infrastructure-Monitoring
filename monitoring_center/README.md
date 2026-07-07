@@ -19,7 +19,8 @@ Monitoring Center to lokalny dodatek Home Assistant do wspólnego monitorowania 
 - publikowanie encji `binary_sensor` oraz `sensor` do Home Assistant,
 - eventy `monitor_online`, `monitor_offline`, `website_changed`, `website_error`,
 - eventy typów monitorów, np. `website_hash_changed`, `ssl_certificate_expiring`, `dns_record_changed`,
-- import i export konfiguracji monitorów do JSON.
+- import i export konfiguracji monitorów do JSON,
+- self-check dodatku z aktywnymi testami schedulera, SQLite, `/data`, Home Assistant API i publikacji HA.
 
 ## Nowe typy systemowe i sieciowe
 
@@ -100,6 +101,59 @@ API discovery:
 
 - `POST /api/discovery/scan` przyjmuje `sources`, opcjonalne `network_cidr`, `timeout_seconds` i `max_hosts`,
 - `POST /api/discovery/import` tworzy tylko monitory przekazane przez UI albo klienta API.
+
+## Mapa topologii
+
+Widok **Topologia** pokazuje lokalna mape zaleznosci urzadzen i uslug, np. `Internet -> router -> switch ->
+AP -> NAS / Home Assistant / Pi-hole / IoT`. Dane sa zapisywane lokalnie w SQLite w tabelach
+`topology_nodes` i `topology_edges`.
+
+Node moze byc typu `internet`, `router`, `switch`, `ap`, `server`, `iot`, `service` albo `other`. Po przypisaniu
+`monitor_id` status node'a wynika z aktualnego statusu monitora; node bez monitora ma status neutralny.
+Elementy mozna przeciagac po mapie, laczyc liniami w trybie **Polacz**, a klikniecie node'a z monitorem
+otwiera szczegoly tego monitora. Przycisk **Auto-layout** uklada prosta instalacje warstwowo i potrafi
+utworzyc startowa mape na podstawie istniejacych monitorow.
+
+API topologii:
+
+- `GET /api/topology`,
+- `PUT /api/topology`,
+- `POST /api/topology/auto-layout`.
+
+## Dynamiczne progi i anomaly detection
+
+Kazdy monitor moze wlaczyc dynamiczne progi w sekcji **Dynamiczne progi** formularza. System liczy baseline z
+historii danego monitora w `monitor_checks`: srednia, mediana, p95 i standard deviation. Anomalia moze podniesc
+status do `warning` albo `error`, dodaje event `monitor_anomaly_detected` i zapisuje w `details_json` pola
+`baseline`, `current_value`, `anomaly_score` i `anomaly_reason`.
+
+Wspolne pola konfiguracji:
+
+- `anomaly_detection_enabled`,
+- `anomaly_window_hours`,
+- `anomaly_min_samples`,
+- `anomaly_stddev_multiplier`,
+- `anomaly_warn_percent_over_baseline`,
+- `anomaly_error_percent_over_baseline`.
+
+Obslugiwane metryki to `response_ms`, `packet_loss`, `dns_lookup_ms`, `disk_usage_percent`,
+`directory_size_bytes` i `file_count`. Historia przyjmuje filtr statusu `anomaly`, a dashboard pokazuje liczbe
+aktywnych anomalii z ostatnich wynikow monitorow.
+
+## Self-check dodatku
+
+Widok **Diagnostyka** zawiera sekcje **Self-check**. Przycisk **Uruchom self-check** wykonuje aktywne testy:
+zapis/odczyt SQLite, zapis/odczyt katalogu `/data`, polaczenie z Home Assistant API oraz publikacje testowego
+eventu albo encji, gdy odpowiednie opcje sa wlaczone. Wynik kazdego testu jest pokazany osobno i zapisywany jako
+event `diagnostics_self_check` z payloadem bez sekretow.
+
+Rozszerzone `GET /api/diagnostics/full` zwraca m.in. uptime procesu, wersje Pythona i dodatku, `schema_version`,
+rozmiar SQLite/WAL, liczbe monitorow, checki z ostatnich 24h, sredni czas checkow, bledy schedulera, status HA API,
+zapis do `/data`, status pliku logu oraz zuzycie RAM/CPU procesu, jesli system je udostepnia.
+
+Dostepny jest tez typ monitora `monitoring_center_health`. W Diagnostyce przycisk **Utworz monitor health** tworzy
+zwykly monitor **Monitoring Center Health**, ktory sprawdza lokalny endpoint diagnostyczny i pozwala monitorowac sam
+dodatek tym samym mechanizmem co inne uslugi.
 
 ## Dane
 

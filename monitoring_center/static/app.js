@@ -6,6 +6,9 @@ const state = {
   summary: null,
   diagnostics: null,
   incidents: [],
+  topology: { nodes: [], edges: [] },
+  topologyConnectMode: false,
+  topologyConnectSource: null,
   settings: null,
   selectedMonitorId: null,
   currentTest: null,
@@ -51,6 +54,7 @@ const MONITOR_TYPE_CATEGORIES = {
   http_hash: "website",
   rest_api: "website",
   ha_entity: "home_assistant",
+  monitoring_center_health: "system",
 };
 
 const $ = (selector, root = document) => root.querySelector(selector);
@@ -74,6 +78,7 @@ function bindNavigation() {
       if (button.dataset.tab === "history") loadHistory();
       if (button.dataset.tab === "events") loadEvents();
       if (button.dataset.tab === "incidents") renderIncidents();
+      if (button.dataset.tab === "topology") loadTopology();
     });
   });
   $("#refreshBtn").addEventListener("click", manualRefresh);
@@ -107,6 +112,8 @@ function bindNavigation() {
     if (state.selectedMonitorId) showSnapshots(state.selectedMonitorId);
   });
   $("#openDiscoveryBtn")?.addEventListener("click", openDiscoveryDialog);
+  $("#runSelfCheckBtn")?.addEventListener("click", runSelfCheck);
+  $("#createSelfMonitorBtn")?.addEventListener("click", createSelfMonitor);
   bindDetailHistoryControls();
   $$("[data-open-form]").forEach((button) => {
     button.addEventListener("click", () => openMonitorForm({ type: button.dataset.openForm }));
@@ -209,6 +216,9 @@ function bindForms() {
   });
   $("#incidentsRefreshBtn")?.addEventListener("click", loadIncidents);
   $("#diagnosticsRefreshBtn")?.addEventListener("click", loadDiagnostics);
+  $("#topologySaveBtn")?.addEventListener("click", saveTopology);
+  $("#topologyAutoLayoutBtn")?.addEventListener("click", autoLayoutTopology);
+  $("#topologyConnectBtn")?.addEventListener("click", toggleTopologyConnectMode);
   $$("[data-dialog-close]").forEach((button) => {
     button.addEventListener("click", () => $(`#${button.dataset.dialogClose}`)?.close());
   });
@@ -257,15 +267,16 @@ function applyDetailHistoryRange(range) {
 }
 
 async function refreshAll() {
-  const [summary, monitors, groups, settings, monitorTypes, presets, diagnostics, incidents] = await Promise.all([
+  const [summary, monitors, groups, settings, monitorTypes, presets, diagnostics, incidents, topology] = await Promise.all([
     api("/api/summary"),
     api("/api/monitors"),
     api("/api/groups"),
     api("/api/settings"),
     api("/api/monitor-types"),
     api("/api/presets"),
-    api("/api/diagnostics"),
+    api("/api/diagnostics/full"),
     api("/api/incidents?limit=100"),
+    api("/api/topology"),
   ]);
   state.summary = summary;
   state.monitors = monitors;
@@ -275,6 +286,7 @@ async function refreshAll() {
   state.presets = presets;
   state.diagnostics = diagnostics;
   state.incidents = incidents;
+  state.topology = topology;
   state.lastRefreshedAt = new Date().toISOString();
   renderGlobalStatus();
   $("#lastRefreshAt").textContent = `Odświeżono: ${formatDate(state.lastRefreshedAt)}`;
@@ -288,6 +300,7 @@ async function refreshAll() {
   renderHistoryMonitorOptions();
   renderIncidentMonitorOptions();
   renderIncidents();
+  renderTopology();
   renderDetailMonitorOptions();
   renderSettings();
   if ($("#events")?.classList.contains("active")) loadEvents();
@@ -452,6 +465,7 @@ function renderDashboard() {
     ? `${summary.slo["7d"].uptime_percent}%`
     : "-";
   $("#metricIncidents").textContent = state.diagnostics?.incident_count ?? state.incidents.length ?? 0;
+  if ($("#metricAnomalies")) $("#metricAnomalies").textContent = summary.active_anomalies ?? 0;
   renderWorstMonitors(monitors);
   renderSslExpiry(monitors);
   renderSchedulerStatus();
@@ -747,6 +761,165 @@ function renderSlo(slo) {
   }).join("");
 }
 
+async function loadTopology() {
+  state.topology = await api("/api/topology");
+  renderTopology();
+}
+
+function renderTopology() {
+  const canvas = $("#topologyCanvas");
+  const nodesRoot = $("#topologyNodes");
+  const edgesRoot = $("#topologyEdges");
+  if (!canvas || !nodesRoot || !edgesRoot) return;
+  const nodes = state.topology?.nodes || [];
+  const edges = state.topology?.edges || [];
+  edgesRoot.setAttribute("viewBox", `0 0 ${canvas.clientWidth || 1000} ${canvas.clientHeight || 640}`);
+  if (!nodes.length) {
+    nodesRoot.innerHTML = '<div class="topology-empty">Uzyj Auto-layout, aby utworzyc mape z istniejacych monitorow.</div>';
+    edgesRoot.innerHTML = "";
+    return;
+  }
+  nodesRoot.innerHTML = nodes.map((node) => `
+    <button class="topology-node ${topologyStatusClass(node.status)} ${state.topologyConnectSource === node.id ? "connect-source" : ""}"
+      type="button" data-node-id="${node.id}" style="left:${Number(node.x || 0)}px;top:${Number(node.y || 0)}px"
+      title="${escapeHtml(node.monitor ? "Otworz monitor " + node.monitor.name : node.name)}">
+      <span class="topology-node-icon">${escapeHtml(topologyIconLabel(node))}</span>
+      <strong>${escapeHtml(node.name)}</strong>
+      <small>${escapeHtml(node.status || "neutral")}</small>
+    </button>
+  `).join("");
+  bindTopologyNodes();
+  renderTopologyEdges(edgesRoot, canvas, nodes, edges);
+}
+
+function renderTopologyEdges(root, canvas, nodes, edges) {
+  const byId = new Map(nodes.map((node) => [node.id, node]));
+  root.innerHTML = edges.map((edge) => {
+    const source = byId.get(edge.source_node_id);
+    const target = byId.get(edge.target_node_id);
+    if (!source || !target) return "";
+    const x1 = Number(source.x || 0) + 68;
+    const y1 = Number(source.y || 0) + 34;
+    const x2 = Number(target.x || 0) + 68;
+    const y2 = Number(target.y || 0) + 34;
+    const labelX = (x1 + x2) / 2;
+    const labelY = (y1 + y2) / 2 - 6;
+    return `<g>
+      <line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}"></line>
+      ${edge.label ? `<text x="${labelX}" y="${labelY}">${escapeHtml(edge.label)}</text>` : ""}
+    </g>`;
+  }).join("");
+  root.setAttribute("viewBox", `0 0 ${canvas.clientWidth || 1000} ${canvas.clientHeight || 640}`);
+}
+
+function bindTopologyNodes() {
+  $$(".topology-node").forEach((nodeEl) => {
+    nodeEl.addEventListener("click", handleTopologyNodeClick);
+    nodeEl.addEventListener("pointerdown", startTopologyDrag);
+  });
+}
+
+function handleTopologyNodeClick(event) {
+  const nodeId = Number(event.currentTarget.dataset.nodeId);
+  const node = state.topology.nodes.find((item) => item.id === nodeId);
+  if (!node) return;
+  if (state.topologyConnectMode) {
+    event.preventDefault();
+    if (!state.topologyConnectSource) {
+      state.topologyConnectSource = nodeId;
+      renderTopology();
+      return;
+    }
+    if (state.topologyConnectSource !== nodeId) {
+      const exists = state.topology.edges.some((edge) => edge.source_node_id === state.topologyConnectSource && edge.target_node_id === nodeId);
+      if (!exists) {
+        state.topology.edges.push({ source_node_id: state.topologyConnectSource, target_node_id: nodeId, label: "", metadata: {} });
+      }
+    }
+    state.topologyConnectSource = null;
+    renderTopology();
+    return;
+  }
+  if (node.monitor_id) showMonitorDetails(Number(node.monitor_id));
+}
+
+function startTopologyDrag(event) {
+  if (state.topologyConnectMode) return;
+  const nodeEl = event.currentTarget;
+  const nodeId = Number(nodeEl.dataset.nodeId);
+  const node = state.topology.nodes.find((item) => item.id === nodeId);
+  const canvas = $("#topologyCanvas");
+  if (!node || !canvas) return;
+  const rect = canvas.getBoundingClientRect();
+  const offsetX = event.clientX - rect.left - Number(node.x || 0);
+  const offsetY = event.clientY - rect.top - Number(node.y || 0);
+  nodeEl.setPointerCapture(event.pointerId);
+  const move = (moveEvent) => {
+    node.x = Math.max(8, Math.min((canvas.clientWidth || 1000) - 150, moveEvent.clientX - rect.left - offsetX));
+    node.y = Math.max(8, Math.min((canvas.clientHeight || 640) - 82, moveEvent.clientY - rect.top - offsetY));
+    nodeEl.style.left = `${node.x}px`;
+    nodeEl.style.top = `${node.y}px`;
+    renderTopologyEdges($("#topologyEdges"), canvas, state.topology.nodes, state.topology.edges);
+  };
+  const stop = () => {
+    nodeEl.removeEventListener("pointermove", move);
+    nodeEl.removeEventListener("pointerup", stop);
+    nodeEl.removeEventListener("pointercancel", stop);
+  };
+  nodeEl.addEventListener("pointermove", move);
+  nodeEl.addEventListener("pointerup", stop);
+  nodeEl.addEventListener("pointercancel", stop);
+}
+
+function toggleTopologyConnectMode() {
+  state.topologyConnectMode = !state.topologyConnectMode;
+  state.topologyConnectSource = null;
+  $("#topologyConnectBtn")?.setAttribute("aria-pressed", String(state.topologyConnectMode));
+  $("#topologyConnectBtn")?.classList.toggle("active", state.topologyConnectMode);
+  renderTopology();
+}
+
+async function saveTopology() {
+  state.topology = await api("/api/topology", {
+    method: "PUT",
+    body: JSON.stringify(state.topology),
+  });
+  renderTopology();
+  toast("Mapa topologii zapisana.");
+}
+
+async function autoLayoutTopology() {
+  state.topology = await api("/api/topology/auto-layout", { method: "POST" });
+  renderTopology();
+  toast("Auto-layout zastosowany.");
+}
+
+function topologyStatusClass(status) {
+  if (isErrorStatus(status)) return "bad";
+  if (status === "warning") return "warning";
+  if (isSuccessStatus(status)) return "ok";
+  return "neutral";
+}
+
+function topologyIconLabel(node) {
+  const type = node.icon || node.type || "other";
+  return {
+    cloud: "WAN",
+    router: "RTR",
+    network: "SW",
+    wifi: "AP",
+    server: "SRV",
+    cpu: "IoT",
+    box: "SVC",
+    circle: "DEV",
+    internet: "WAN",
+    switch: "SW",
+    ap: "AP",
+    service: "SVC",
+    iot: "IoT",
+  }[type] || String(type).slice(0, 3).toUpperCase();
+}
+
 function applyPreset() {
   const index = $("#presetSelect").value;
   if (index === "") {
@@ -781,6 +954,7 @@ function renderTypeFields(type) {
     ssl_certificate: ["URL lub domena", "example.com"],
     rest_api: ["URL lub domena", "https://example.com/api/status"],
     ha_entity: ["Entity ID", "sensor.example"],
+    monitoring_center_health: ["Cel", "self"],
     mqtt_monitor: ["Topic lub broker", "home/topic/status"],
     ssh_command: ["Host SSH", "192.168.1.10:22"],
     docker_container: ["Host SSH i kontener", "192.168.1.50:homeassistant"],
@@ -880,6 +1054,7 @@ function buildMonitorConfig(form, type) {
   if (SNMP_TYPES.has(type)) addSnmpConfig(config, form);
   if (LOG_REGEX_TYPES.has(type)) addLogRegexConfig(config, form, type);
   addAlertConfig(config, form);
+  addAnomalyConfig(config, form);
   return config;
 }
 
@@ -998,6 +1173,15 @@ function addAlertConfig(config, form) {
   config.deduplicate_alerts = form.elements.deduplicate_alerts.checked;
   config.alert_channels = csvStrings(form.elements.alert_channels.value || "home_assistant_event");
   if (form.elements.webhook_url.value.trim()) config.webhook_url = form.elements.webhook_url.value.trim();
+}
+
+function addAnomalyConfig(config, form) {
+  config.anomaly_detection_enabled = form.elements.anomaly_detection_enabled.checked;
+  if (form.elements.anomaly_window_hours.value) config.anomaly_window_hours = Number(form.elements.anomaly_window_hours.value);
+  if (form.elements.anomaly_min_samples.value) config.anomaly_min_samples = Number(form.elements.anomaly_min_samples.value);
+  if (form.elements.anomaly_stddev_multiplier.value) config.anomaly_stddev_multiplier = Number(form.elements.anomaly_stddev_multiplier.value);
+  if (form.elements.anomaly_warn_percent_over_baseline.value) config.anomaly_warn_percent_over_baseline = Number(form.elements.anomaly_warn_percent_over_baseline.value);
+  if (form.elements.anomaly_error_percent_over_baseline.value) config.anomaly_error_percent_over_baseline = Number(form.elements.anomaly_error_percent_over_baseline.value);
 }
 
 function csvNumbers(value) {
@@ -1933,11 +2117,25 @@ function renderMonitorDetailsShell(id) {
       ["Suma kontrolna WWW", monitor.last_content_hash || "-"],
     ] : []),
     ["Błąd", monitor.last_error || "-", monitor.last_error ? "error" : ""],
+    ...anomalyDetailRows(monitor),
     ["Konfiguracja", JSON.stringify(monitor.config || {}, null, 2), "code"],
   ];
   $("#detailData").innerHTML = detailData
     .map(([key, value, variant]) => `<dt>${escapeHtml(key)}</dt><dd>${renderDetailValue(value, variant)}</dd>`)
     .join("");
+}
+
+function anomalyDetailRows(monitor) {
+  const anomaly = monitor.config?.last_anomaly;
+  if (!anomaly?.anomaly_reason) return [];
+  const baseline = anomaly.baseline || {};
+  return [
+    ["Anomaly metric", anomaly.metric || baseline.metric || "-"],
+    ["Baseline", `mean ${baseline.mean ?? "-"} · median ${baseline.median ?? "-"} · p95 ${baseline.p95 ?? "-"} · stddev ${baseline.stddev ?? "-"}`],
+    ["Obecny wynik", anomaly.current_value ?? "-"],
+    ["Anomaly score", anomaly.anomaly_score ?? "-"],
+    ["Powod anomalii", anomaly.anomaly_reason],
+  ];
 }
 
 function renderDetailDate(value) {
@@ -2469,6 +2667,12 @@ function populateExtendedMonitorFields(form, config) {
   form.elements.deduplicate_alerts.checked = config.deduplicate_alerts !== false;
   form.elements.alert_channels.value = (config.alert_channels || ["home_assistant_event"]).join(",");
   form.elements.webhook_url.value = "";
+  form.elements.anomaly_detection_enabled.checked = Boolean(config.anomaly_detection_enabled);
+  form.elements.anomaly_window_hours.value = config.anomaly_window_hours ?? "";
+  form.elements.anomaly_min_samples.value = config.anomaly_min_samples ?? "";
+  form.elements.anomaly_stddev_multiplier.value = config.anomaly_stddev_multiplier ?? "";
+  form.elements.anomaly_warn_percent_over_baseline.value = config.anomaly_warn_percent_over_baseline ?? "";
+  form.elements.anomaly_error_percent_over_baseline.value = config.anomaly_error_percent_over_baseline ?? "";
 }
 
 function getMonitorFormInterval(monitor) {
@@ -2642,7 +2846,7 @@ async function loadHistory() {
     <tr class="${isErrorStatus(row.status) ? "history-error" : ""}" data-history-index="${index}">
       <td>${formatDate(row.checked_at)}</td>
       <td>${escapeHtml(row.monitor_name)}<br><small>${escapeHtml(row.target)}</small></td>
-      <td><span class="badge ${badgeClass(row.status)}">${escapeHtml(row.status)}</span></td>
+      <td><span class="badge ${badgeClass(row.status)}">${escapeHtml(row.status)}</span>${row.anomaly ? ' <span class="badge warning">anomaly</span>' : ""}</td>
       <td>${row.severity ? `<span class="badge">${escapeHtml(row.severity)}</span>` : "-"}</td>
       <td>${formatResponse(row.response_ms)}</td>
       <td>${row.http_status || "-"}</td>
@@ -2854,6 +3058,106 @@ async function loadDiagnosticsModern() {
 
 loadDiagnostics = loadDiagnosticsModern;
 
+async function loadDiagnosticsSelfCheck() {
+  const [diagnostics, logs] = await Promise.all([
+    api("/api/diagnostics/full"),
+    api("/api/logs"),
+  ]);
+  state.diagnostics = diagnostics;
+  renderSchedulerStatus();
+  const process = diagnostics.process || {};
+  const haApi = diagnostics.home_assistant_api || {};
+  const dataWritable = diagnostics.data_writable || {};
+  const logStatus = diagnostics.log_file_status || {};
+  const walStatus = diagnostics.wal_status || {};
+  $("#diagnosticsData").innerHTML = definitionRows({
+    Wersja: diagnostics.addon_version || diagnostics.version,
+    Python: process.python_version || "-",
+    "Uptime procesu": process.uptime_seconds !== null && process.uptime_seconds !== undefined ? formatSeconds(process.uptime_seconds) : "-",
+    "CPU procesu": process.cpu_seconds !== null && process.cpu_seconds !== undefined ? `${process.cpu_seconds}s` : "-",
+    "RAM procesu": process.max_rss_kb ? `${process.max_rss_kb} KB` : "-",
+    "Schema version": diagnostics.schema_version ?? "-",
+    "Status bazy": diagnostics.database_exists ? "OK" : "Brak",
+    "Sciezka bazy": diagnostics.database_path,
+    "Rozmiar bazy": formatBytes(diagnostics.database_size_bytes),
+    WAL: walStatus.exists ? `aktywny, ${formatBytes(walStatus.size_bytes)}` : "brak",
+    "Liczba monitorow": diagnostics.monitor_count,
+    "Wpisy historii": diagnostics.check_count,
+    "Checki 24h": diagnostics.checks_last_24h ?? 0,
+    "Sredni czas checkow": formatResponse(diagnostics.avg_check_response_ms),
+    "Ostatni test": formatDate(diagnostics.last_check),
+    "Ostatni tick schedulera": formatDate(diagnostics.scheduler_last_tick),
+    "Aktywne zadania": diagnostics.active_jobs?.join(", ") || "-",
+    "Oczekujace zadania": diagnostics.queued_jobs?.join(", ") || "-",
+    "Limit rownoleglosci": diagnostics.max_concurrent_checks,
+    "Bledy schedulera": diagnostics.scheduler_error_count ?? 0,
+    "Ostatni blad schedulera": diagnostics.scheduler_last_error || "-",
+    "Home Assistant API": haApi.ok ? "OK" : haApi.available === false ? "niedostepne" : haApi.error || "blad",
+    "Zapis /data": dataWritable.ok ? "OK" : "blad",
+    "Plik logu": logStatus.writable ? `OK, ${formatBytes(logStatus.size_bytes)}` : "brak zapisu",
+    "Encje HA": diagnostics.settings?.publish_home_assistant_entities ? "wlaczone" : "wylaczone",
+    "Eventy HA": diagnostics.settings?.publish_home_assistant_events ? "wlaczone" : "wylaczone",
+  });
+  renderList("#diagnosticsErrors", diagnostics.errors || [], (row) => `
+    <div class="list-item">
+      <strong>${escapeHtml(row.error || "Blad")}</strong>
+      <small>${formatDate(row.checked_at)} · monitor ${row.monitor_id || "-"}</small>
+    </div>
+  `);
+  $("#logsBox").textContent = logs || "Brak logow.";
+}
+
+async function runSelfCheck() {
+  const button = $("#runSelfCheckBtn");
+  const run = async () => {
+    const result = await api("/api/diagnostics/self-check", { method: "POST" });
+    renderSelfCheckResults(result);
+    await loadDiagnostics();
+    toast("Self-check zakonczony.");
+  };
+  if (button) {
+    await runWithButtonLoading(button, run);
+  } else {
+    await run();
+  }
+}
+
+function renderSelfCheckResults(result) {
+  const checks = result?.checks || [];
+  renderList("#selfCheckResults", checks, (check) => `
+    <div class="list-item">
+      <strong>${escapeHtml(check.name || "check")}</strong>
+      <small><span class="badge ${check.ok ? "online" : "error"}">${check.ok ? "OK" : "ERROR"}</span></small>
+      <span>${escapeHtml(check.error || check.reason || check.status_code || "")}</span>
+    </div>
+  `);
+}
+
+async function createSelfMonitor() {
+  const existing = state.monitors.find((monitor) => monitor.type === "monitoring_center_health");
+  if (existing) {
+    openMonitorForm(existing);
+    return;
+  }
+  await api("/api/monitors", {
+    method: "POST",
+    body: JSON.stringify({
+      type: "monitoring_center_health",
+      name: "Monitoring Center Health",
+      target: "self",
+      interval_seconds: 300,
+      group_id: null,
+      enabled: true,
+      test_on_save: false,
+      config: {},
+    }),
+  });
+  toast("Monitor health utworzony.");
+  await refreshAll();
+}
+
+loadDiagnostics = loadDiagnosticsSelfCheck;
+
 function renderList(selector, items, renderer) {
   const root = $(selector);
   if (!root) return;
@@ -3054,6 +3358,20 @@ function average(values) {
 
 function formatResponse(value) {
   return value ? `${Number(value).toFixed(1)} ms` : "-";
+}
+
+function formatBytes(value) {
+  const bytes = Number(value);
+  if (!Number.isFinite(bytes)) return "-";
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ["KB", "MB", "GB"];
+  let size = bytes / 1024;
+  let index = 0;
+  while (size >= 1024 && index < units.length - 1) {
+    size /= 1024;
+    index += 1;
+  }
+  return `${size.toFixed(size >= 10 ? 1 : 2)} ${units[index]}`;
 }
 
 function debounce(fn, delay = 200) {

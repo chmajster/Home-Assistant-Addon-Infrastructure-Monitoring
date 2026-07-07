@@ -16,11 +16,17 @@ class DummyHomeAssistant:
     async def list_states(self, timeout: float = 10.0) -> list[dict]:
         return self.states
 
+    async def get_api_status(self, timeout: float = 5.0) -> dict:
+        return {"ok": True, "available": True, "status_code": 200}
+
     async def publish_monitor_state(self, monitor: dict) -> None:
         return None
 
     async def fire_event(self, event_type: str, payload: dict) -> bool:
         return False
+
+    async def publish_test_state(self, entity_id: str, state: object, attributes: dict) -> bool:
+        return True
 
 
 @pytest.fixture

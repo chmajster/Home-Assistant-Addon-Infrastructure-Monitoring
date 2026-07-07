@@ -324,7 +324,10 @@ async def get_topology() -> dict[str, Any]:
 @app.put("/api/topology")
 async def put_topology(payload: TopologyIn) -> dict[str, Any]:
     data = payload.model_dump()
-    data["nodes"] = [{**node, "type": payload.nodes[index].normalized_type()} for index, node in enumerate(data["nodes"])]
+    data["nodes"] = [
+        {**node, "type": payload.nodes[index].normalized_type()}
+        for index, node in enumerate(data["nodes"])
+    ]
     return service.save_topology(data)
 
 
@@ -335,9 +338,14 @@ async def topology_auto_layout() -> dict[str, Any]:
 
 @app.get("/api/diagnostics/full")
 async def diagnostics_full() -> dict[str, Any]:
-    data = service.diagnostics()
+    data = await service.full_diagnostics()
     data["ready"] = await ready()
     return data
+
+
+@app.post("/api/diagnostics/self-check")
+async def diagnostics_self_check() -> dict[str, Any]:
+    return await service.run_self_check()
 
 
 @app.get("/api/logs", response_class=PlainTextResponse)

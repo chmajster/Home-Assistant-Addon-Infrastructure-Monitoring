@@ -50,6 +50,14 @@
         <path d="M10 11v2a5 5 0 0 0 10 0v-1"></path>
         <circle cx="20" cy="10" r="2"></circle>
       </symbol>
+      <symbol id="icon-topology" viewBox="0 0 24 24">
+        <circle cx="6" cy="6" r="3"></circle>
+        <circle cx="18" cy="6" r="3"></circle>
+        <circle cx="12" cy="18" r="3"></circle>
+        <path d="M8.5 7.8 11 15"></path>
+        <path d="M15.5 7.8 13 15"></path>
+        <path d="M9 6h6"></path>
+      </symbol>
     </svg>
     <div class="app-shell">
       <aside class="sidebar" aria-label="Nawigacja główna">
@@ -67,6 +75,7 @@
           <button class="tab" data-tab="incidents"><svg class="nav-icon" aria-hidden="true"><use href="#icon-incidents"></use></svg><span>Incydenty</span></button>
           <button class="tab" data-tab="history"><svg class="nav-icon" aria-hidden="true"><use href="#icon-history"></use></svg><span>Historia</span></button>
           <button class="tab" data-tab="events"><svg class="nav-icon" aria-hidden="true"><use href="#icon-events"></use></svg><span>Zdarzenia</span></button>
+          <button class="tab" data-tab="topology"><svg class="nav-icon" aria-hidden="true"><use href="#icon-topology"></use></svg><span>Topologia</span></button>
           <button class="tab" data-tab="settings"><svg class="nav-icon" aria-hidden="true"><use href="#icon-settings"></use></svg><span>Ustawienia</span></button>
           <button class="tab" data-tab="diagnostics"><svg class="nav-icon" aria-hidden="true"><use href="#icon-diagnostics"></use></svg><span>Diagnostyka</span></button>
         </nav>
@@ -121,6 +130,7 @@
               <article><small>Uptime 24h</small><span id="metricUptime24">-</span></article>
               <article><small>Uptime 7d</small><span id="metricUptime7">-</span></article>
               <article><small>Incydenty</small><span id="metricIncidents">0</span></article>
+              <article><small>Anomalie</small><span id="metricAnomalies">0</span></article>
             </div>
 
             <div class="dashboard-grid">
@@ -265,6 +275,26 @@
             <section class="panel">
               <h3>Monitory wybranej grupy</h3>
               <div id="groupMonitorList" class="list empty">Wybierz grupę kartą lub filtrem.</div>
+            </section>
+          </section>
+
+          <section id="topology" class="view">
+            <div class="view-head">
+              <div>
+                <h2>Topologia</h2>
+                <p>Mapa zaleznosci urzadzen i uslug w sieci domowej.</p>
+              </div>
+              <div class="actions compact-actions">
+                <button id="topologyConnectBtn" type="button" aria-pressed="false">Polacz</button>
+                <button id="topologyAutoLayoutBtn" type="button">Auto-layout</button>
+                <button id="topologySaveBtn" class="primary" type="button">Zapisz mape</button>
+              </div>
+            </div>
+            <section class="panel topology-panel">
+              <div id="topologyCanvas" class="topology-canvas">
+                <svg id="topologyEdges" class="topology-edges" aria-hidden="true"></svg>
+                <div id="topologyNodes" class="topology-nodes"></div>
+              </div>
             </section>
           </section>
 
@@ -432,7 +462,7 @@
                 <label>Monitor<select id="historyMonitor"><option value="">Wszystkie</option></select></label>
                 <label>Grupa<select id="historyGroup"><option value="">Wszystkie</option></select></label>
                 <label>Typ<select id="historyType"><option value="">Wszystkie</option></select></label>
-                <label>Status<input id="historyStatus" placeholder="online, offline, ok, error" /></label>
+                <label>Status<input id="historyStatus" placeholder="online, offline, ok, error, anomaly" /></label>
                 <label>Severity<select id="historySeverity"><option value="">Wszystkie</option><option>info</option><option>warning</option><option>critical</option></select></label>
                 <label>Od<input id="historyFrom" type="datetime-local" /></label>
                 <label>Do<input id="historyTo" type="datetime-local" /></label>
@@ -481,6 +511,7 @@
                   <option>ssl_certificate_expiring</option>
                   <option>dns_record_changed</option>
                   <option>monitor_alert</option>
+                  <option>monitor_anomaly_detected</option>
                   <option>monitor_alert_recovered</option>
                   <option>monitor_alert_suppressed</option>
                   <option>ssh_command_error</option>
@@ -558,6 +589,16 @@
               <section class="panel"><h3>Backend</h3><dl id="diagnosticsData" class="diagnostics"></dl></section>
               <section class="panel"><h3>Ostatnie błędy</h3><div id="diagnosticsErrors" class="list empty">Brak danych</div></section>
             </div>
+            <section class="panel">
+              <div class="panel-head">
+                <h3>Self-check</h3>
+                <div class="actions compact-actions">
+                  <button id="createSelfMonitorBtn" type="button">Utworz monitor health</button>
+                  <button id="runSelfCheckBtn" class="primary" type="button">Uruchom self-check</button>
+                </div>
+              </div>
+              <div id="selfCheckResults" class="list empty">Nie uruchomiono self-check.</div>
+            </section>
             <section class="panel">
               <h3>Logi aplikacji</h3>
               <pre id="logsBox"></pre>
@@ -664,6 +705,17 @@
           <h3>Alerty</h3>
           <div class="nested">
             <label>Severity<select name="severity"><option value="warning">warning</option><option value="info">info</option><option value="critical">critical</option></select></label><label>Cooldown min<input name="cooldown_minutes" type="number" min="0" placeholder="30" /></label><label>Repeat every min<input name="repeat_every_minutes" type="number" min="0" placeholder="0" /></label><label>Max repeats<input name="max_repeats" type="number" min="0" placeholder="0" /></label><label>Kanaly alertow<input name="alert_channels" placeholder="home_assistant_event,persistent_notification,webhook" /></label><label>Webhook URL<input name="webhook_url" placeholder="https://example.com/hook" /></label><label class="check"><input name="notify_on_recovery" type="checkbox" checked /> Event po recovery</label><label class="check"><input name="deduplicate_alerts" type="checkbox" checked /> Deduplikuj alerty</label>
+          </div>
+        </section>
+        <section id="anomalyOptionsSection" class="form-section">
+          <h3>Dynamiczne progi</h3>
+          <div class="nested">
+            <label class="check"><input name="anomaly_detection_enabled" type="checkbox" /> Wlacz anomaly detection</label>
+            <label>Okno baseline h<input name="anomaly_window_hours" type="number" min="1" max="8760" placeholder="24" /></label>
+            <label>Min. probek<input name="anomaly_min_samples" type="number" min="2" max="10000" placeholder="12" /></label>
+            <label>Stddev multiplier<input name="anomaly_stddev_multiplier" type="number" min="0" step="0.1" placeholder="3" /></label>
+            <label>Warning % ponad baseline<input name="anomaly_warn_percent_over_baseline" type="number" min="0" step="1" placeholder="50" /></label>
+            <label>Error % ponad baseline<input name="anomaly_error_percent_over_baseline" type="number" min="0" step="1" placeholder="100" /></label>
           </div>
         </section>
         <section class="form-section split">

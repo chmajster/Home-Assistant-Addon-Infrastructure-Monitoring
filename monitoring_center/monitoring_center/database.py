@@ -91,6 +91,8 @@ class Database:
             "event_count": count("events"),
             "snapshot_count": count("website_snapshots"),
             "incident_count": count("incidents"),
+            "topology_node_count": count("topology_nodes"),
+            "topology_edge_count": count("topology_edges"),
             "oldest_check": checks_range.get("oldest_check") if checks_range else None,
             "newest_check": checks_range.get("newest_check") if checks_range else None,
         }

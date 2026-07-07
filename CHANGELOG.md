@@ -6,6 +6,24 @@ Format opiera się na konwencji Keep a Changelog, a wersjonowanie dodatku powinn
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-07-07
+
+### Added
+
+- Dodano self-check dodatku: rozszerzone `/api/diagnostics/full`, aktywny `POST /api/diagnostics/self-check`, event `diagnostics_self_check`, monitor `monitoring_center_health` oraz sekcje Self-check w Diagnostyce.
+
+## [0.10.0] - 2026-07-07
+
+### Added
+
+- Dodano dynamiczne progi/anomaly detection dla czasu odpowiedzi, packet loss, DNS latency, uzycia dysku, rozmiaru katalogu i liczby plikow.
+
+## [0.9.0] - 2026-07-07
+
+### Added
+
+- Dodano lokalna mape topologii zapisywana w SQLite: przeciagane node'y, laczenie liniami, status z monitora i auto-layout.
+
 ## [0.8.0] - 2026-07-07
 
 ### Added

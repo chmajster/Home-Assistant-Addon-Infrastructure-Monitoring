@@ -4,6 +4,24 @@ All notable changes to the **Monitoring Center** Home Assistant add-on are docum
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-07-07
+
+### Added
+
+- Added add-on self-check diagnostics: extended `/api/diagnostics/full`, active `POST /api/diagnostics/self-check`, `diagnostics_self_check` events, the `monitoring_center_health` monitor type, and a Diagnostics Self-check UI section.
+
+## [0.10.0] - 2026-07-07
+
+### Added
+
+- Added dynamic threshold anomaly detection for response time, packet loss, DNS latency, disk usage, directory size, and file count metrics.
+
+## [0.9.0] - 2026-07-07
+
+### Added
+
+- Added a local SQLite-backed topology map with draggable nodes, link editing, monitor-derived node status, and auto-layout.
+
 ## [0.8.0] - 2026-07-07
 
 ### Added
