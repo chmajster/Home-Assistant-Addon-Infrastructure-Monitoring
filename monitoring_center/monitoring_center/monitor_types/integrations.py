@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 # ruff: noqa: E501
-
 import asyncio
 import time
 from typing import Any
@@ -120,7 +119,15 @@ class SnmpOidMonitor:
 
     async def check(self, monitor: dict[str, Any], context: MonitorContext) -> CheckResult:
         try:
-            from pysnmp.hlapi.asyncio import CommunityData, ContextData, ObjectIdentity, ObjectType, SnmpEngine, UdpTransportTarget, get_cmd
+            from pysnmp.hlapi.asyncio import (
+                CommunityData,
+                ContextData,
+                ObjectIdentity,
+                ObjectType,
+                SnmpEngine,
+                UdpTransportTarget,
+                get_cmd,
+            )
         except ImportError:
             return CheckResult("error", error="pysnmp is required for SNMP monitors", details={"host": monitor["config"].get("host")}, events=["snmp_error"])
         cfg = monitor["config"]
