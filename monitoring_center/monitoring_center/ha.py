@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import re
@@ -8,6 +9,7 @@ from typing import Any
 import httpx
 
 from .config import AppConfig
+from .validators import ensure_public_url_if_required
 
 LOGGER = logging.getLogger(__name__)
 
@@ -23,6 +25,12 @@ class HomeAssistantClient:
         self.config = config
         self.base_url = "http://supervisor/core/api"
         self.token = os.environ.get("SUPERVISOR_TOKEN")
+        self._client = httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=5.0), follow_redirects=False)
+        self.publish_error_count = 0
+        self.last_publish_success_at: str | None = None
+
+    async def close(self) -> None:
+        await self._client.aclose()
 
     @property
     def available(self) -> bool:
@@ -31,19 +39,17 @@ class HomeAssistantClient:
     async def list_states(self, timeout: float = 10.0) -> list[dict[str, Any]]:
         if not self.available:
             return []
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            response = await client.get(f"{self.base_url}/states", headers=self._headers)
-            response.raise_for_status()
-            data = response.json()
+        response = await self._client.get(f"{self.base_url}/states", headers=self._headers, timeout=timeout)
+        response.raise_for_status()
+        data = response.json()
         return data if isinstance(data, list) else []
 
     async def get_api_status(self, timeout: float = 5.0) -> dict[str, Any]:
         if not self.available:
             return {"ok": False, "available": False, "error": "SUPERVISOR_TOKEN is not available"}
         try:
-            async with httpx.AsyncClient(timeout=timeout) as client:
-                response = await client.get(f"{self.base_url}/", headers=self._headers)
-                response.raise_for_status()
+            response = await self._client.get(f"{self.base_url}/", headers=self._headers, timeout=timeout)
+            response.raise_for_status()
             return {"ok": True, "available": True, "status_code": response.status_code}
         except Exception as exc:  # pragma: no cover - depends on HA runtime
             return {"ok": False, "available": True, "error": str(exc)}
@@ -52,13 +58,13 @@ class HomeAssistantClient:
         if not self.available:
             return False
         try:
-            async with httpx.AsyncClient(timeout=5.0) as client:
-                response = await client.post(
-                    f"{self.base_url}/states/{entity_id}",
-                    headers=self._headers,
-                    json={"state": str(state), "attributes": attributes},
-                )
-                response.raise_for_status()
+            response = await self._client.post(
+                f"{self.base_url}/states/{entity_id}",
+                headers=self._headers,
+                json={"state": str(state), "attributes": attributes},
+                timeout=5.0,
+            )
+            response.raise_for_status()
             return True
         except Exception as exc:  # pragma: no cover - network integration
             LOGGER.warning("Failed to publish self-check entity %s: %s", entity_id, exc)
@@ -69,7 +75,7 @@ class HomeAssistantClient:
             return
 
         prefix = slugify(self.config.entity_prefix)
-        monitor_slug = slugify(f"{monitor['id']}_{monitor['name']}")
+        monitor_slug = str(int(monitor["id"]))
         status = monitor.get("status", "unknown")
         is_online = status in {"online", "ok", "open", "warning"}
         attrs = {
@@ -147,13 +153,10 @@ class HomeAssistantClient:
         if not self.config.publish_home_assistant_events or not self.available:
             return False
         try:
-            async with httpx.AsyncClient(timeout=5.0) as client:
-                response = await client.post(
-                    f"{self.base_url}/events/{event_type}",
-                    headers=self._headers,
-                    json=payload,
-                )
-                response.raise_for_status()
+            response = await self._client.post(
+                f"{self.base_url}/events/{event_type}", headers=self._headers, json=payload, timeout=5.0
+            )
+            response.raise_for_status()
             return True
         except Exception as exc:  # pragma: no cover - network integration
             LOGGER.warning("Failed to fire Home Assistant event %s: %s", event_type, exc)
@@ -163,13 +166,13 @@ class HomeAssistantClient:
         if not self.available:
             return False
         try:
-            async with httpx.AsyncClient(timeout=5.0) as client:
-                response = await client.post(
-                    f"{self.base_url}/services/persistent_notification/create",
-                    headers=self._headers,
-                    json={"title": title, "message": message},
-                )
-                response.raise_for_status()
+            response = await self._client.post(
+                f"{self.base_url}/services/persistent_notification/create",
+                headers=self._headers,
+                json={"title": title, "message": message},
+                timeout=5.0,
+            )
+            response.raise_for_status()
             return True
         except Exception as exc:  # pragma: no cover - network integration
             LOGGER.warning("Failed to create Home Assistant persistent notification: %s", exc)
@@ -179,25 +182,70 @@ class HomeAssistantClient:
         if not url:
             return False
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                response = await client.post(url, json=payload)
-                response.raise_for_status()
+            ensure_public_url_if_required(url, not self.config.allow_private_webhooks)
+            response = await self._client.post(url, json=payload, timeout=10.0)
+            response.raise_for_status()
             return True
         except Exception as exc:  # pragma: no cover - network integration
             LOGGER.warning("Failed to deliver monitoring webhook: %s", exc)
             return False
 
     async def _set_state(self, entity_id: str, state: Any, attributes: dict[str, Any]) -> None:
-        try:
-            async with httpx.AsyncClient(timeout=5.0) as client:
-                response = await client.post(
+        for attempt in range(3):
+            try:
+                response = await self._client.post(
                     f"{self.base_url}/states/{entity_id}",
                     headers=self._headers,
                     json={"state": str(state), "attributes": attributes},
+                    timeout=5.0,
                 )
                 response.raise_for_status()
-        except Exception as exc:  # pragma: no cover - network integration
-            LOGGER.warning("Failed to publish %s to Home Assistant: %s", entity_id, exc)
+                from datetime import UTC, datetime
+
+                self.last_publish_success_at = datetime.now(UTC).isoformat()
+                return
+            except Exception as exc:  # pragma: no cover - network integration
+                self.publish_error_count += 1
+                if attempt == 2:
+                    LOGGER.warning("Failed to publish %s to Home Assistant: %s", entity_id, exc)
+                else:
+                    await asyncio.sleep(0.25 * (2**attempt))
+
+    async def delete_monitor_states(self, monitor: dict[str, Any]) -> None:
+        if not self.available:
+            return
+        prefix = slugify(self.config.entity_prefix)
+        identifiers = {str(int(monitor["id"])), slugify(f"{monitor['id']}_{monitor['name']}")}
+        suffixes = (
+            "status",
+            "response_time",
+            "last_error",
+            "http_status",
+            "last_change",
+            "change_count",
+            "last_hash",
+            "tcp_port",
+            "ssl_days_left",
+            "dns_result",
+        )
+        await asyncio.gather(
+            *(
+                self._delete_state(f"{domain}.{prefix}_{identifier}_{suffix}")
+                for identifier in identifiers
+                for suffix in suffixes
+                for domain in (("binary_sensor",) if suffix == "status" else ("sensor",))
+            )
+        )
+
+    async def _delete_state(self, entity_id: str) -> None:
+        try:
+            response = await self._client.delete(
+                f"{self.base_url}/states/{entity_id}", headers=self._headers, timeout=5.0
+            )
+            if response.status_code not in {200, 404}:
+                response.raise_for_status()
+        except Exception as exc:  # pragma: no cover
+            LOGGER.warning("Failed to remove Home Assistant entity %s: %s", entity_id, exc)
 
     @property
     def _headers(self) -> dict[str, str]:

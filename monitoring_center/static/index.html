@@ -553,6 +553,8 @@
               <section class="panel">
                 <h3>Bezpieczeństwo i Home Assistant</h3>
                 <label class="check"><input name="block_private_networks" type="checkbox" /> Blokuj prywatne adresy dla URL</label>
+                <label class="check"><input name="allow_private_webhooks" type="checkbox" /> Zezwalaj webhookom na prywatne adresy</label>
+                <p class="muted" role="note">Uwaga: prywatny webhook może wykonywać żądania do usług w sieci domowej. Włączaj tylko dla zaufanych adresów.</p>
                 <label class="check"><input name="publish_home_assistant_entities" type="checkbox" /> Publikuj encje Home Assistant</label>
                 <label class="check"><input name="publish_home_assistant_events" type="checkbox" /> Publikuj eventy Home Assistant</label>
               </section>
@@ -792,6 +794,6 @@
     </dialog>
 
     <div id="toast" role="status" aria-label="Komunikat aplikacji" title="Kliknij, aby zamknąć"></div>
-    <script src="static/app.js?v=0.7.7"></script>
+    <script type="module" src="static/app.js?v=0.12.0"></script>
   </body>
 </html>

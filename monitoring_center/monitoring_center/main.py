@@ -1,15 +1,17 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
+import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any, cast
 
 import uvicorn
-from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import __version__
@@ -24,42 +26,98 @@ from .schemas import (
     DiscoveryScanIn,
     GroupIn,
     GroupUpdate,
+    IncidentActionIn,
     MaintenanceIn,
     MonitorIn,
     MonitorsImportIn,
     MonitorUpdate,
+    Page,
     SettingsIn,
     TopologyIn,
 )
+from .secret_store import SecretStore, SecretStoreError
+from .security import sanitize_secrets
 
-config = AppConfig.load()
-configure_logging(config.log_level, config.log_file)
-db = Database(config.database_path)
-migrate(db)
-ha = HomeAssistantClient(config)
-service = MonitorService(db, config, ha)
-
+LOGGER = logging.getLogger(__name__)
+config = cast(AppConfig, None)
+db = cast(Database, None)
+ha = cast(HomeAssistantClient, None)
+service = cast(MonitorService, None)
 scheduler_task: asyncio.Task[Any] | None = None
 
 
 @asynccontextmanager
-async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-    global scheduler_task
-    scheduler_task = asyncio.create_task(service.scheduler())
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    global config, db, ha, scheduler_task, service
+    config = AppConfig.load()
+    configure_logging(config.log_level, config.log_file)
+    db = Database(config.database_path)
+    migrate(db)
+    try:
+        secrets = SecretStore(db, config.database_path.parent / "monitoring_center.key")
+        ha = HomeAssistantClient(config)
+        service = MonitorService(db, config, ha, secrets)
+    except SecretStoreError as exc:
+        app.state.config = config
+        app.state.db = db
+        app.state.ready_error = str(exc)
+        LOGGER.error("SecretStore not ready: %s", exc)
+        try:
+            yield
+        finally:
+            db.close()
+        return
+    except Exception:
+        db.close()
+        raise
+    scheduler_task = asyncio.create_task(service.scheduler(), name="monitoring-scheduler")
+    app.state.config = config
+    app.state.db = db
+    app.state.ha = ha
+    app.state.service = service
+    app.state.scheduler_task = scheduler_task
+    app.state.ready_error = None
     try:
         yield
     finally:
         service.stop()
-        if scheduler_task:
-            scheduler_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await scheduler_task
-        scheduler_task = None
+        scheduler_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await scheduler_task
+        await service.wait_for_tasks()
+        await ha.close()
+        db.checkpoint(truncate=True)
+        db.optimize()
         db.close()
+        scheduler_task = None
 
 
-app = FastAPI(title="Monitoring Center", version=__version__, lifespan=lifespan)
+def create_app() -> FastAPI:
+    return FastAPI(title="Monitoring Center", version=__version__, lifespan=lifespan)
+
+
+app = create_app()
 static_path = Path(__file__).resolve().parent.parent / "static"
+
+
+def _service(request: Request | None = None) -> MonitorService:
+    target = request.app if request else app
+    service = getattr(target.state, "service", None)
+    if service is None:
+        raise HTTPException(status_code=503, detail="Aplikacja nie jest gotowa")
+    return service
+
+
+@app.exception_handler(Exception)
+async def unhandled_error_handler(request: Request, exc: Exception) -> JSONResponse:
+    error_id = uuid.uuid4().hex
+    LOGGER.exception(
+        "Nieobsłużony błąd API id=%s path=%s detail=%s", error_id, request.url.path, sanitize_secrets(str(exc))
+    )
+    return JSONResponse(
+        status_code=500,
+        content={"error": {"id": error_id, "code": "internal_error", "message": "Wewnętrzny błąd serwera"}},
+    )
 
 
 @app.get("/health")
@@ -69,6 +127,16 @@ async def health() -> dict[str, str]:
 
 @app.get("/ready")
 async def ready() -> dict[str, Any]:
+    ready_error = getattr(app.state, "ready_error", None)
+    if ready_error:
+        return {
+            "status": "not_ready",
+            "database": True,
+            "data_dir_writable": os.access(config.database_path.parent, os.W_OK),
+            "scheduler": False,
+            "schema_version": None,
+            "reason": ready_error,
+        }
     diagnostics = service.diagnostics()
     data_dir = config.database_path.parent
     writable = os.access(data_dir, os.W_OK)
@@ -85,6 +153,11 @@ async def ready() -> dict[str, Any]:
 @app.get("/api/summary")
 async def summary() -> dict[str, Any]:
     return service.get_summary()
+
+
+@app.get("/api/bootstrap")
+async def bootstrap() -> dict[str, Any]:
+    return service.get_bootstrap()
 
 
 @app.get("/api/slo")
@@ -203,9 +276,9 @@ async def delete_monitor(monitor_id: int) -> dict[str, str]:
 
 
 @app.post("/api/monitors/{monitor_id}/check")
-async def check_monitor(monitor_id: int) -> dict[str, Any]:
+async def check_monitor(monitor_id: int, force: bool = False) -> dict[str, Any]:
     try:
-        return await service.run_check(monitor_id)
+        return await service.run_check(monitor_id, force=force)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Monitor not found") from exc
 
@@ -301,6 +374,52 @@ async def incidents(
     return service.list_incidents(limit=limit, active_only=active_only, monitor_id=monitor_id)
 
 
+@app.post("/api/incidents/{incident_id}/acknowledge")
+async def acknowledge_incident(incident_id: int, payload: IncidentActionIn) -> dict[str, Any]:
+    return service.update_incident(incident_id, "acknowledged", payload.comment)
+
+
+@app.post("/api/incidents/{incident_id}/close")
+async def close_incident(incident_id: int, payload: IncidentActionIn) -> dict[str, Any]:
+    return service.update_incident(incident_id, "closed", payload.comment)
+
+
+@app.get("/api/v2/history", response_model=Page)
+async def history_page(
+    monitor_id: int | None = None,
+    status: str | None = None,
+    cursor: str | None = None,
+    limit: int = Query(default=100, ge=1, le=500),
+) -> dict[str, Any]:
+    return service.get_cursor_page("history", limit, cursor, monitor_id=monitor_id, status=status)
+
+
+@app.get("/api/v2/events", response_model=Page)
+async def events_page(cursor: str | None = None, limit: int = Query(default=100, ge=1, le=500)) -> dict[str, Any]:
+    return service.get_cursor_page("events", limit, cursor)
+
+
+@app.get("/api/v2/incidents", response_model=Page)
+async def incidents_page(
+    monitor_id: int | None = None,
+    cursor: str | None = None,
+    limit: int = Query(default=100, ge=1, le=500),
+) -> dict[str, Any]:
+    return service.get_cursor_page("incidents", limit, cursor, monitor_id=monitor_id)
+
+
+@app.get("/api/v2/monitors", response_model=Page)
+async def monitors_page(cursor: str | None = None, limit: int = Query(default=100, ge=1, le=500)) -> dict[str, Any]:
+    return service.get_cursor_page("monitors", limit, cursor)
+
+
+@app.get("/api/v2/monitors/{monitor_id}/snapshots", response_model=Page)
+async def snapshots_page(
+    monitor_id: int, cursor: str | None = None, limit: int = Query(default=100, ge=1, le=500)
+) -> dict[str, Any]:
+    return service.get_cursor_page("snapshots", limit, cursor, monitor_id=monitor_id)
+
+
 @app.get("/api/settings")
 async def settings() -> dict[str, Any]:
     return service.get_settings()
@@ -308,7 +427,7 @@ async def settings() -> dict[str, Any]:
 
 @app.put("/api/settings")
 async def update_settings(payload: SettingsIn) -> dict[str, Any]:
-    return service.update_settings(payload.model_dump())
+    return service.update_settings(payload.model_dump(exclude_none=True))
 
 
 @app.get("/api/diagnostics")
@@ -325,8 +444,7 @@ async def get_topology() -> dict[str, Any]:
 async def put_topology(payload: TopologyIn) -> dict[str, Any]:
     data = payload.model_dump()
     data["nodes"] = [
-        {**node, "type": payload.nodes[index].normalized_type()}
-        for index, node in enumerate(data["nodes"])
+        {**node, "type": payload.nodes[index].normalized_type()} for index, node in enumerate(data["nodes"])
     ]
     return service.save_topology(data)
 
@@ -352,8 +470,57 @@ async def diagnostics_self_check() -> dict[str, Any]:
 async def logs(lines: int = Query(default=300, ge=1, le=2000)) -> str:
     if not config.log_file.exists():
         return ""
-    content = config.log_file.read_text(encoding="utf-8", errors="replace").splitlines()
-    return "\n".join(content[-lines:])
+    with config.log_file.open("rb") as handle:
+        handle.seek(0, os.SEEK_END)
+        position = handle.tell()
+        chunks: list[bytes] = []
+        newline_count = 0
+        while position > 0 and newline_count <= lines:
+            size = min(8192, position)
+            position -= size
+            handle.seek(position)
+            chunk = handle.read(size)
+            chunks.append(chunk)
+            newline_count += chunk.count(b"\n")
+    return "\n".join(b"".join(reversed(chunks)).decode("utf-8", errors="replace").splitlines()[-lines:])
+
+
+@app.post("/api/database/backups")
+async def create_database_backup() -> dict[str, Any]:
+    stamp = uuid.uuid4().hex[:8]
+    schema = db.fetchone("SELECT MAX(version) AS version FROM schema_migrations") or {"version": 0}
+    destination = db.path.parent / f"monitoring-center.schema-{schema['version']}.{stamp}.sqlite"
+    db.backup(destination)
+    return {"name": destination.name, "size": destination.stat().st_size, "schema_version": schema["version"]}
+
+
+@app.get("/api/database/backups/{name}")
+async def download_database_backup(name: str) -> FileResponse:
+    safe_name = Path(name).name
+    if safe_name != name or not safe_name.startswith("monitoring-center.schema-"):
+        raise HTTPException(status_code=404, detail="Backup nie istnieje")
+    path = db.path.parent / safe_name
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Backup nie istnieje")
+    return FileResponse(path, filename=safe_name)
+
+
+@app.post("/api/database/restore")
+async def restore_database(confirm: bool, backup: Annotated[UploadFile, File()]) -> dict[str, Any]:
+    if not confirm:
+        raise HTTPException(status_code=409, detail="Restore wymaga jawnego potwierdzenia")
+    temporary = db.path.parent / f"restore-{uuid.uuid4().hex}.sqlite"
+    try:
+        with temporary.open("wb") as handle:
+            while chunk := await backup.read(1024 * 1024):
+                handle.write(chunk)
+        before = db.path.parent / f"monitoring-center.pre-restore-{uuid.uuid4().hex[:8]}.sqlite"
+        db.backup(before)
+        db.restore(temporary)
+        migrate(db)
+        return {"status": "restored", "safety_backup": before.name}
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 app.mount("/static", StaticFiles(directory=static_path), name="static")
@@ -373,7 +540,7 @@ def main() -> None:
         host=os.environ.get("MONITORING_CENTER_HOST", "0.0.0.0"),
         port=int(os.environ.get("MONITORING_CENTER_PORT", "8099")),
         proxy_headers=True,
-        forwarded_allow_ips="*",
+        forwarded_allow_ips=os.environ.get("MONITORING_CENTER_TRUSTED_PROXIES", "127.0.0.1,::1,172.30.32.2"),
     )
 
 

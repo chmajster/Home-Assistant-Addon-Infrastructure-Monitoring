@@ -29,7 +29,8 @@
   mode: single
   trigger:
     - platform: state
-      entity_id: binary_sensor.monitoring_center_1_router_status
+      # Numer 1 jest stabilnym ID monitora, niezależnym od jego nazwy.
+      entity_id: binary_sensor.monitoring_center_1_status
       to: "off"
       for: "00:02:00"
   action:

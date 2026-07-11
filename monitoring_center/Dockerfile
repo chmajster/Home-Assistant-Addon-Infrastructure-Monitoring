@@ -1,7 +1,7 @@
 ARG BUILD_ARCH=amd64
 FROM ghcr.io/home-assistant/${BUILD_ARCH}-base-python:3.13-alpine3.24
 
-ARG BUILD_VERSION=0.11.0
+ARG BUILD_VERSION=0.12.0
 ARG BUILD_ARCH=amd64
 ARG BUILD_REVISION=local
 
@@ -11,7 +11,7 @@ LABEL \
   io.hass.version="${BUILD_VERSION}" \
   io.hass.type="app" \
   io.hass.arch="${BUILD_ARCH}" \
-  org.opencontainers.image.source="https://github.com/chmajster/Home-Assistant-Monitoring" \
+  org.opencontainers.image.source="https://github.com/chmajster/Home-Assistant-Addon-Infrastructure-Monitoring" \
   org.opencontainers.image.revision="${BUILD_REVISION}" \
   org.opencontainers.image.version="${BUILD_VERSION}" \
   org.opencontainers.image.description="Local network and website monitoring center for Home Assistant"
@@ -31,7 +31,7 @@ COPY monitoring_center /app/monitoring_center
 COPY static /app/static
 COPY run.sh /run.sh
 
-RUN chmod a+x /run.sh
+RUN sed -i 's/\r$//' /run.sh && chmod a+x /run.sh
 
 EXPOSE 8099
 CMD ["/run.sh"]

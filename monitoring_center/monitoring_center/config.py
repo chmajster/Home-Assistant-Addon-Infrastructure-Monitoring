@@ -21,6 +21,9 @@ DEFAULT_OPTIONS: dict[str, Any] = {
     "retry_delay_seconds": 10,
     "max_page_size_mb": 5,
     "block_private_networks": False,
+    "allow_private_monitor_targets": True,
+    "allow_private_webhooks": False,
+    "allowed_network_cidrs": [],
     "publish_home_assistant_entities": True,
     "publish_home_assistant_events": True,
     "entity_prefix": "monitoring_center",
@@ -47,6 +50,9 @@ class AppConfig:
     publish_home_assistant_events: bool
     entity_prefix: str
     options_path: Path
+    allow_private_monitor_targets: bool = True
+    allow_private_webhooks: bool = False
+    allowed_network_cidrs: tuple[str, ...] = ()
 
     @classmethod
     def load(cls) -> AppConfig:
@@ -88,11 +94,14 @@ class AppConfig:
             publish_home_assistant_events=bool(data["publish_home_assistant_events"]),
             entity_prefix=str(data["entity_prefix"]),
             options_path=options_path,
+            allow_private_monitor_targets=bool(data["allow_private_monitor_targets"]),
+            allow_private_webhooks=bool(data["allow_private_webhooks"]),
+            allowed_network_cidrs=tuple(str(item) for item in data.get("allowed_network_cidrs", [])),
         )
 
 
 def _safe_float(value: object, default: float) -> float:
     try:
-        return float(value)
+        return float(str(value))
     except (TypeError, ValueError):
         return default

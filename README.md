@@ -1,5 +1,10 @@
 # Home Assistant Monitoring
 
+Aktualna wersja: **0.12.0**. Repozytorium: https://github.com/chmajster/Home-Assistant-Addon-Infrastructure-Monitoring
+
+Aktualizacja z 0.11.0 jest migracją in-place. Przy pierwszym starcie powstaje spójny backup SQLite,
+wykonywane są migracje 11–14 i jednorazowe szyfrowanie sekretów. Zachowaj razem bazę oraz plik klucza z `/data`.
+
 Repozytorium lokalnego dodatku Home Assistant **Monitoring Center**.
 
 Dodatek znajduje się w katalogu [monitoring_center](monitoring_center). Zawiera backend Python/FastAPI, panel WWW, SQLite z migracjami, przykładową konfigurację i przykłady automatyzacji Home Assistant.

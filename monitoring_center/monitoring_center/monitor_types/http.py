@@ -5,6 +5,7 @@ import logging
 import re
 import time
 from typing import Any
+from urllib.parse import urljoin
 
 import httpx
 from bs4 import BeautifulSoup
@@ -75,12 +76,15 @@ async def _http_fetch(monitor: dict[str, Any], context: MonitorContext, hash_con
         )
         max_page_size_mb = monitor["config"].get("max_page_size_mb")
         if max_page_size_mb in (None, "") and monitor["config"].get("max_page_size_kb") not in (None, ""):
-            max_page_size_mb = positive_float(
-                monitor["config"]["max_page_size_kb"],
-                float(context.settings["max_page_size_mb"]) * 1024,
-                1,
-                None,
-            ) / 1024
+            max_page_size_mb = (
+                positive_float(
+                    monitor["config"]["max_page_size_kb"],
+                    float(context.settings["max_page_size_mb"]) * 1024,
+                    1,
+                    None,
+                )
+                / 1024
+            )
         effective_max_page_size_mb = positive_float(
             max_page_size_mb,
             float(context.settings["max_page_size_mb"]),
@@ -90,17 +94,31 @@ async def _http_fetch(monitor: dict[str, Any], context: MonitorContext, hash_con
         max_bytes = int(effective_max_page_size_mb * 1024 * 1024)
         started = time.perf_counter()
         async with httpx.AsyncClient(
-            follow_redirects=True,
+            follow_redirects=False,
             timeout=timeout,
             trust_env=False,
             headers={"User-Agent": "MonitoringCenter/0.2"},
         ) as client:
-            async with client.stream("GET", url) as response:
-                body = bytearray()
-                async for chunk in response.aiter_bytes():
-                    body.extend(chunk)
-                    if len(body) > max_bytes:
-                        raise PageSizeLimitExceeded(PAGE_SIZE_LIMIT_ERROR)
+            current_url = url
+            body = bytearray()
+            for _redirect in range(6):
+                # Resolve and validate every hop. This also detects a hostname whose
+                # answers change between the initial request and a redirect.
+                ensure_public_url_if_required(current_url, bool(context.settings["block_private_networks"]))
+                async with client.stream("GET", current_url) as response:
+                    if response.status_code in {301, 302, 303, 307, 308}:
+                        location = response.headers.get("location")
+                        if not location:
+                            break
+                        current_url = validate_url(urljoin(current_url, location))
+                        continue
+                    async for chunk in response.aiter_bytes():
+                        body.extend(chunk)
+                        if len(body) > max_bytes:
+                            raise PageSizeLimitExceeded(PAGE_SIZE_LIMIT_ERROR)
+                    break
+            else:
+                raise ValueError("Too many HTTP redirects")
         elapsed_ms = (time.perf_counter() - started) * 1000
         status = "ok" if response.status_code in expected else ("warning" if response.status_code < 400 else "error")
         details: dict[str, Any] = {

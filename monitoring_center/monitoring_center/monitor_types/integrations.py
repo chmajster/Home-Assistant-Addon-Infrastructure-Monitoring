@@ -19,8 +19,12 @@ class HomeAssistantHealthMonitor:
     default_interval = 300
 
     def validate(self, target: str, config: dict[str, Any], app_config: AppConfig) -> tuple[str, dict[str, Any]]:
-        config["max_unavailable_entities_warning"] = positive_int(config.get("max_unavailable_entities_warning"), 5, 0, 100000)
-        config["max_unavailable_entities_error"] = positive_int(config.get("max_unavailable_entities_error"), 15, 0, 100000)
+        config["max_unavailable_entities_warning"] = positive_int(
+            config.get("max_unavailable_entities_warning"), 5, 0, 100000
+        )
+        config["max_unavailable_entities_error"] = positive_int(
+            config.get("max_unavailable_entities_error"), 15, 0, 100000
+        )
         config["max_unknown_entities_warning"] = positive_int(config.get("max_unknown_entities_warning"), 10, 0, 100000)
         config["check_supervisor"] = bool(config.get("check_supervisor", True))
         config["check_updates"] = bool(config.get("check_updates", True))
@@ -31,7 +35,9 @@ class HomeAssistantHealthMonitor:
 
     async def check(self, monitor: dict[str, Any], context: MonitorContext) -> CheckResult:
         if not context.ha.available:
-            return CheckResult("error", error="Home Assistant Supervisor token is unavailable", events=["ha_health_error"])
+            return CheckResult(
+                "error", error="Home Assistant Supervisor token is unavailable", events=["ha_health_error"]
+            )
         started = time.perf_counter()
         details: dict[str, Any] = {}
         try:
@@ -48,14 +54,32 @@ class HomeAssistantHealthMonitor:
         error = None
         cfg = monitor["config"]
         if len(unavailable) >= int(cfg["max_unavailable_entities_error"]):
-            status, error, events = "error", "Too many unavailable Home Assistant entities", ["ha_entities_unavailable", "ha_health_error"]
-        elif len(unavailable) >= int(cfg["max_unavailable_entities_warning"]) or len(unknown) >= int(cfg["max_unknown_entities_warning"]):
-            status, error, events = "warning", "Home Assistant entity warning threshold exceeded", ["ha_entities_unavailable", "ha_health_warning"]
-        updates = [item for item in states if item.get("entity_id", "").startswith("update.") and item.get("state") == "on"]
+            status, error, events = (
+                "error",
+                "Too many unavailable Home Assistant entities",
+                ["ha_entities_unavailable", "ha_health_error"],
+            )
+        elif len(unavailable) >= int(cfg["max_unavailable_entities_warning"]) or len(unknown) >= int(
+            cfg["max_unknown_entities_warning"]
+        ):
+            status, error, events = (
+                "warning",
+                "Home Assistant entity warning threshold exceeded",
+                ["ha_entities_unavailable", "ha_health_warning"],
+            )
+        updates = [
+            item for item in states if item.get("entity_id", "").startswith("update.") and item.get("state") == "on"
+        ]
         details["pending_updates"] = len(updates)
         if cfg.get("check_updates") and updates and status == "online":
-            status, error, events = "warning", "Home Assistant updates available", ["ha_updates_available", "ha_health_warning"]
-        return CheckResult(status, response_ms=(time.perf_counter() - started) * 1000, error=error, details=details, events=events)
+            status, error, events = (
+                "warning",
+                "Home Assistant updates available",
+                ["ha_updates_available", "ha_health_warning"],
+            )
+        return CheckResult(
+            status, response_ms=(time.perf_counter() - started) * 1000, error=error, details=details, events=events
+        )
 
 
 class PiHoleHealthMonitor:
@@ -91,13 +115,27 @@ class PiHoleHealthMonitor:
         details["ads_percentage_today"] = data.get("ads_percentage_today")
         details["status"] = data.get("status")
         if data.get("status") not in {None, "enabled"}:
-            return CheckResult("error", response_ms=(time.perf_counter() - started) * 1000, error="Pi-hole blocking is disabled", details=details, events=["pihole_error"])
+            return CheckResult(
+                "error",
+                response_ms=(time.perf_counter() - started) * 1000,
+                error="Pi-hole blocking is disabled",
+                details=details,
+                events=["pihole_error"],
+            )
         if cfg.get("dns_host"):
             dns_ok = await asyncio.to_thread(_dns_probe, cfg["dns_host"], int(cfg["dns_port"]), cfg["test_domain"])
             details["dns_probe_ok"] = dns_ok
             if not dns_ok:
-                return CheckResult("error", response_ms=(time.perf_counter() - started) * 1000, error="Pi-hole DNS probe failed", details=details, events=["pihole_dns_failed"])
-        return CheckResult("online", response_ms=(time.perf_counter() - started) * 1000, details=details, events=["pihole_ok"])
+                return CheckResult(
+                    "error",
+                    response_ms=(time.perf_counter() - started) * 1000,
+                    error="Pi-hole DNS probe failed",
+                    details=details,
+                    events=["pihole_dns_failed"],
+                )
+        return CheckResult(
+            "online", response_ms=(time.perf_counter() - started) * 1000, details=details, events=["pihole_ok"]
+        )
 
 
 class SnmpOidMonitor:
@@ -129,7 +167,12 @@ class SnmpOidMonitor:
                 get_cmd,
             )
         except ImportError:
-            return CheckResult("error", error="pysnmp is required for SNMP monitors", details={"host": monitor["config"].get("host")}, events=["snmp_error"])
+            return CheckResult(
+                "error",
+                error="pysnmp is required for SNMP monitors",
+                details={"host": monitor["config"].get("host")},
+                events=["snmp_error"],
+            )
         cfg = monitor["config"]
         started = time.perf_counter()
         target = await UdpTransportTarget.create((cfg["host"], int(cfg["port"])), timeout=5, retries=1)
@@ -146,9 +189,21 @@ class SnmpOidMonitor:
         numeric = _float(value)
         details = {"host": cfg["host"], "oid": cfg["oid"], "value": value, "numeric_value": numeric}
         if _compare(numeric, cfg["operator"], float(cfg["error_value"])):
-            return CheckResult("error", response_ms=(time.perf_counter() - started) * 1000, error="SNMP error threshold exceeded", details=details, events=["snmp_error"])
+            return CheckResult(
+                "error",
+                response_ms=(time.perf_counter() - started) * 1000,
+                error="SNMP error threshold exceeded",
+                details=details,
+                events=["snmp_error"],
+            )
         if _compare(numeric, cfg["operator"], float(cfg["warning_value"])):
-            return CheckResult("warning", response_ms=(time.perf_counter() - started) * 1000, error="SNMP warning threshold exceeded", details=details, events=["snmp_warning"])
+            return CheckResult(
+                "warning",
+                response_ms=(time.perf_counter() - started) * 1000,
+                error="SNMP warning threshold exceeded",
+                details=details,
+                events=["snmp_warning"],
+            )
         return CheckResult("online", response_ms=(time.perf_counter() - started) * 1000, details=details)
 
 
@@ -175,13 +230,36 @@ class UniFiDeviceMonitor:
         try:
             result = await run_ssh_command(cfg, command)
         except Exception as exc:
-            return CheckResult("offline", error=str(exc), details={"device_host": cfg.get("device_host")}, events=["unifi_device_offline"])
+            return CheckResult(
+                "offline",
+                error=str(exc),
+                details={"device_host": cfg.get("device_host")},
+                events=["unifi_device_offline"],
+            )
         loss = _packet_loss(result.stdout)
-        details = {"device_host": cfg["device_host"], "packet_loss_percent": loss, "output_excerpt": result.stdout[-1000:]}
+        details = {
+            "device_host": cfg["device_host"],
+            "packet_loss_percent": loss,
+            "output_excerpt": result.stdout[-1000:],
+        }
         if result.exit_code != 0:
-            return CheckResult("error", response_ms=result.elapsed_ms, packet_loss=loss, error="UniFi device offline", details=details, events=["unifi_device_offline"])
+            return CheckResult(
+                "error",
+                response_ms=result.elapsed_ms,
+                packet_loss=loss,
+                error="UniFi device offline",
+                details=details,
+                events=["unifi_device_offline"],
+            )
         if loss >= float(cfg.get("packet_loss_warning_percent") or 20):
-            return CheckResult("warning", response_ms=result.elapsed_ms, packet_loss=loss, error="UniFi packet loss warning", details=details, events=["unifi_packet_loss"])
+            return CheckResult(
+                "warning",
+                response_ms=result.elapsed_ms,
+                packet_loss=loss,
+                error="UniFi packet loss warning",
+                details=details,
+                events=["unifi_packet_loss"],
+            )
         return CheckResult("online", response_ms=result.elapsed_ms, packet_loss=loss, details=details)
 
 

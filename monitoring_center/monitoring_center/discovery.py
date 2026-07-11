@@ -65,7 +65,7 @@ class DiscoveryService:
         results = await asyncio.gather(*tasks, return_exceptions=True)
         proposals: list[DiscoveryProposal] = []
         for result in results:
-            if isinstance(result, Exception):
+            if not isinstance(result, list):
                 continue
             proposals.extend(result)
         return [proposal.as_dict() for proposal in self._deduplicate_proposals(proposals, existing_monitors)]
@@ -77,7 +77,8 @@ class DiscoveryService:
             entity_id = str(state.get("entity_id") or "").strip()
             if "." not in entity_id or entity_id.split(".", 1)[0] not in DISCOVERY_ENTITY_DOMAINS:
                 continue
-            attrs = state.get("attributes") if isinstance(state.get("attributes"), dict) else {}
+            raw_attrs = state.get("attributes")
+            attrs: dict[str, Any] = raw_attrs if isinstance(raw_attrs, dict) else {}
             name = str(attrs.get("friendly_name") or entity_id).strip()
             proposals.append(
                 DiscoveryProposal(
@@ -100,7 +101,7 @@ class DiscoveryService:
         results = await asyncio.gather(*tasks, return_exceptions=True)
         proposals: list[DiscoveryProposal] = []
         for result in results:
-            if isinstance(result, Exception):
+            if not isinstance(result, list):
                 continue
             proposals.extend(result)
         return proposals
@@ -252,7 +253,7 @@ def _hosts_from_cidr(cidr: str, max_hosts: int) -> list[ipaddress.IPv4Address | 
         if index >= max_hosts:
             break
         hosts.append(host)
-    return hosts
+    return [host for host in hosts if isinstance(host, ipaddress.IPv4Address | ipaddress.IPv6Address)]
 
 
 async def _ping_host(host: str, timeout: float) -> bool:

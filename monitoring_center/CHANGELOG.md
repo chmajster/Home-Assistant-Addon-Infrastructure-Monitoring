@@ -4,6 +4,21 @@ All notable changes to the **Monitoring Center** Home Assistant add-on are docum
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-07-12
+
+### Added
+
+- Persistent scheduler, AES-256-GCM SecretStore, cursor API v2, alert retries and SQLite backup/restore.
+- Stable Home Assistant entity IDs and versioned, non-destructive topology updates.
+
+### Changed
+
+- Import-safe FastAPI lifespan, shared HTTP client, modular polling and complete Linux CI validation.
+
+### Security
+
+- Per-redirect SSRF checks, private webhook policy, correlation IDs, log redaction and restricted proxies.
+
 ## [0.11.0] - 2026-07-07
 
 ### Added
@@ -162,7 +177,7 @@ All notable changes to the **Monitoring Center** Home Assistant add-on are docum
 
 ### Changed
 
-- Updated repository and add-on metadata to `https://github.com/chmajster/Home-Assistant-Monitoring`.
+- Updated repository and add-on metadata to `https://github.com/chmajster/Home-Assistant-Addon-Infrastructure-Monitoring`.
 - Bumped add-on and application metadata version to `0.5.4`.
 
 ## [0.5.3] - 2026-06-30

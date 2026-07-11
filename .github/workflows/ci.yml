@@ -1,4 +1,4 @@
-name: Check
+name: CI
 
 on:
   push:
@@ -12,88 +12,60 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+
 jobs:
-  python-check:
+  quality:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
-          python-version: '3.13'
-
-      - name: Cache pip dependencies
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-pip-
-
-      - name: Install dependencies
+          python-version: "3.13"
+          cache: pip
+      - name: Install pinned tools and runtime
         run: |
-          pip install -r monitoring_center/requirements.txt
-          pip install pytest ruff mypy
-
-      - name: Run ruff format check
-        run: ruff format --check .
-
-      - name: Run ruff lint check
-        run: ruff check .
-
-      - name: Run mypy type checking
-        run: mypy monitoring_center/monitoring_center
-
-      - name: Run pytest
+          python -m pip install -r monitoring_center/requirements.txt
+          python -m pip install pytest==8.3.4 ruff==0.8.6 mypy==1.14.1 yamllint==1.35.1 PyYAML==6.0.2 pip-audit==2.7.3
+      - name: Validate repository metadata and offline wheelhouse
+        run: python tools/validate_repository.py
+      - name: Validate YAML
+        run: |
+          find . -type f \( -name '*.yaml' -o -name '*.yml' \) -not -path './.git/*' -print0 \
+            | xargs -0 yamllint -d '{extends: relaxed, rules: {line-length: disable}}'
+      - name: Reject likely committed secrets
+        run: |
+          ! git grep -nEI '(BEGIN (RSA|OPENSSH|EC) PRIVATE KEY|ghp_[A-Za-z0-9]{30,}|sk-[A-Za-z0-9]{32,}|SUPERVISOR_TOKEN=.+)' -- ':!*.md' ':!tools/*'
+      - run: ruff format --check .
+      - run: ruff check .
+      - run: mypy monitoring_center/monitoring_center
+      - name: Test fresh databases and all migrations
         run: pytest -q
+      - name: Audit runtime dependencies used by CI
+        run: pip-audit -r monitoring_center/requirements.txt
 
-  addon-structure-check:
+  image:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
-
-      - name: Verify required files exist
+      - name: Build add-on from its offline context
         run: |
-          test -f repository.yaml || (echo "Error: repository.yaml not found" && exit 1)
-          test -f monitoring_center/config.yaml || (echo "Error: monitoring_center/config.yaml not found" && exit 1)
-          test -f monitoring_center/Dockerfile || (echo "Error: monitoring_center/Dockerfile not found" && exit 1)
-          test -f monitoring_center/run.sh || (echo "Error: monitoring_center/run.sh not found" && exit 1)
-          test -f monitoring_center/requirements.txt || (echo "Error: monitoring_center/requirements.txt not found" && exit 1)
-
-      - name: Verify config.yaml structure
+          docker build --file monitoring_center/Dockerfile --tag monitoring-center:ci \
+            --build-arg BUILD_ARCH=amd64 --build-arg BUILD_VERSION=0.12.0 --build-arg BUILD_REVISION=${{ github.sha }} \
+            monitoring_center
+      - name: Start and probe health/readiness
         run: |
-          # Check for required fields in config.yaml
-          Select-String -Pattern "name:" monitoring_center/config.yaml | Out-Null || (Write-Host "Error: config.yaml missing 'name' field" && exit 1)
-          Select-String -Pattern "version:" monitoring_center/config.yaml | Out-Null || (Write-Host "Error: config.yaml missing 'version' field" && exit 1)
-          Select-String -Pattern "slug:" monitoring_center/config.yaml | Out-Null || (Write-Host "Error: config.yaml missing 'slug' field" && exit 1)
-          Select-String -Pattern "description:" monitoring_center/config.yaml | Out-Null || (Write-Host "Error: config.yaml missing 'description' field" && exit 1)
-          Select-String -Pattern "arch:" monitoring_center/config.yaml | Out-Null || (Write-Host "Error: config.yaml missing 'arch' field" && exit 1)
-          Select-String -Pattern "startup:" monitoring_center/config.yaml | Out-Null || (Write-Host "Error: config.yaml missing 'startup' field" && exit 1)
-          Select-String -Pattern "boot:" monitoring_center/config.yaml | Out-Null || (Write-Host "Error: config.yaml missing 'boot' field" && exit 1)
-          Select-String -Pattern "ingress:" monitoring_center/config.yaml | Out-Null || (Write-Host "Error: config.yaml missing 'ingress' field" && exit 1)
-          Select-String -Pattern "options:" monitoring_center/config.yaml | Out-Null || (Write-Host "Error: config.yaml missing 'options' field" && exit 1)
-          Select-String -Pattern "schema:" monitoring_center/config.yaml | Out-Null || (Write-Host "Error: config.yaml missing 'schema' field" && exit 1)
-
-      - name: Install yamllint
-        run: pip install yamllint
-
-      - name: Run yamllint on YAML files
-        run: |
-          Get-ChildItem -Recurse -Filter "*.yaml" -Path . | ForEach-Object { yamllint $_.FullName }
-          Get-ChildItem -Recurse -Filter "*.yml" -Path . | ForEach-Object { yamllint $_.FullName }
-
-  docker-build-check:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Build Docker image
-        run: |
-          docker build \
-            --file monitoring_center/Dockerfile \
-            --context . \
-            --build-arg BUILD_ARCH=amd64 \
-            --build-arg BUILD_VERSION=ci \
-            --build-arg BUILD_REVISION=${{ github.sha }}
-
+          mkdir -p "$RUNNER_TEMP/monitoring-data"
+          printf '%s\n' '{"database_path":"/data/monitoring_center.db","log_file":"/data/monitoring_center.log"}' > "$RUNNER_TEMP/monitoring-data/options.json"
+          docker run -d --rm --name monitoring-center-ci -p 18099:8099 -v "$RUNNER_TEMP/monitoring-data:/data" monitoring-center:ci
+          for attempt in $(seq 1 30); do curl --fail --silent http://127.0.0.1:18099/health && break; sleep 1; done
+          curl --fail --silent http://127.0.0.1:18099/ready | python -c 'import json,sys; assert json.load(sys.stdin)["status"] == "ready"'
+      - name: Container logs
+        if: failure()
+        run: docker logs monitoring-center-ci
+      - name: Stop container
+        if: always()
+        run: docker stop monitoring-center-ci || true

@@ -23,9 +23,7 @@ async def _test_discovery_finds_home_assistant_entities(
     ]
     service = MonitorService(db, app_config, ha_client)  # type: ignore[arg-type]
 
-    proposals = await service.scan_discovery(
-        {"sources": ["home_assistant"], "timeout_seconds": 1, "max_hosts": 10}
-    )
+    proposals = await service.scan_discovery({"sources": ["home_assistant"], "timeout_seconds": 1, "max_hosts": 10})
 
     assert len(proposals) == 1
     assert proposals[0]["type"] == "ha_entity"
@@ -51,9 +49,7 @@ async def _test_discovery_marks_duplicates(db: Database, app_config: AppConfig, 
         }
     )
 
-    proposals = await service.scan_discovery(
-        {"sources": ["home_assistant"], "timeout_seconds": 1, "max_hosts": 10}
-    )
+    proposals = await service.scan_discovery({"sources": ["home_assistant"], "timeout_seconds": 1, "max_hosts": 10})
 
     assert proposals[0]["duplicate_of_monitor_id"] == created["id"]
 

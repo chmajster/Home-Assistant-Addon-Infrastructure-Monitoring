@@ -7,10 +7,7 @@ from urllib.parse import urlparse, urlunparse
 
 from fastapi import HTTPException
 
-HOSTNAME_RE = re.compile(
-    r"^(?=.{1,253}$)(?!-)[A-Za-z0-9-]{1,63}(?<!-)"
-    r"(\.(?!-)[A-Za-z0-9-]{1,63}(?<!-))*\.?$"
-)
+HOSTNAME_RE = re.compile(r"^(?=.{1,253}$)(?!-)[A-Za-z0-9-]{1,63}(?<!-)" r"(\.(?!-)[A-Za-z0-9-]{1,63}(?<!-))*\.?$")
 
 
 def validate_device_target(target: str) -> str:

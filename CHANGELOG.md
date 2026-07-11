@@ -6,6 +6,24 @@ Format opiera się na konwencji Keep a Changelog, a wersjonowanie dodatku powinn
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-07-12
+
+### Dodano
+
+- Trwały scheduler `next_check_at`, kontrolowany jitter, ograniczoną kolejkę i statusy checków.
+- SecretStore AES-256-GCM z kluczem `0600`, migracją plaintext, rotacją i bezpiecznym eksportem.
+- Cursor API v2, bootstrap frontendu, backup/restore SQLite, osobne retencje i retry alertów.
+- Niedestrukcyjny zapis topologii z wersjonowaniem i walidacją cykli.
+
+### Zmieniono
+
+- Zasoby aplikacji są inicjalizowane w lifespan FastAPI, klient HA jest współdzielony, a encje mają stabilne ID.
+- Frontend podzielono na moduły ES, a CI obejmuje metadane, wheelhouse, migracje, bezpieczeństwo i obraz.
+
+### Bezpieczeństwo
+
+- Walidacja każdego przekierowania HTTP, osobna polityka prywatnych webhooków, redakcja i correlation ID błędów.
+
 ## [0.11.0] - 2026-07-07
 
 ### Added
@@ -164,7 +182,7 @@ Format opiera się na konwencji Keep a Changelog, a wersjonowanie dodatku powinn
 
 ### Changed
 
-- Ustawiono metadane repozytorium i add-onu na `https://github.com/chmajster/Home-Assistant-Monitoring`.
+- Ustawiono metadane repozytorium i add-onu na `https://github.com/chmajster/Home-Assistant-Addon-Infrastructure-Monitoring`.
 - Podniesiono wersje dodatku i metadanych aplikacji do `0.5.4`.
 
 ## [0.5.3] - 2026-06-30

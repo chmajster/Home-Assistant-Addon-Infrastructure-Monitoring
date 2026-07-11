@@ -5,7 +5,7 @@ import socket
 import ssl
 import time
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 from urllib.parse import urlparse
 
 from ..config import AppConfig
@@ -69,7 +69,7 @@ def _fetch_cert(host: str, port: int, timeout: float) -> dict[str, Any]:
     context = ssl.create_default_context()
     with socket.create_connection((host, port), timeout=timeout) as sock:
         with context.wrap_socket(sock, server_hostname=host) as tls:
-            return tls.getpeercert()
+            return cast(dict[str, Any], tls.getpeercert())
 
 
 def _host_port(target: str, config: dict[str, Any]) -> tuple[str, int]:

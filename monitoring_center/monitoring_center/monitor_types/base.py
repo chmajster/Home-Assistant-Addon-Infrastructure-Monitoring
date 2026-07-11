@@ -35,11 +35,9 @@ class MonitorTypePlugin(Protocol):
     category: str
     default_interval: int
 
-    def validate(self, target: str, config: dict[str, Any], app_config: AppConfig) -> tuple[str, dict[str, Any]]:
-        ...
+    def validate(self, target: str, config: dict[str, Any], app_config: AppConfig) -> tuple[str, dict[str, Any]]: ...
 
-    async def check(self, monitor: dict[str, Any], context: MonitorContext) -> CheckResult:
-        ...
+    async def check(self, monitor: dict[str, Any], context: MonitorContext) -> CheckResult: ...
 
 
 def positive_int(value: Any, default: int, minimum: int = 1, maximum: int | None = 65535) -> int:

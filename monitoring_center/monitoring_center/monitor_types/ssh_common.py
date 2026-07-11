@@ -88,7 +88,7 @@ async def run_ssh_command(config: dict[str, Any], command: str | None = None) ->
             return SshCommandResult(None, "", "", (time.perf_counter() - started) * 1000)
         result = await conn.run(_shell_command(command, config), timeout=command_timeout, check=False)
         return SshCommandResult(
-            int(result.exit_status),
+            int(result.exit_status or 0),
             _limit_output(result.stdout, max_output_chars),
             _limit_output(result.stderr, max_output_chars),
             (time.perf_counter() - started) * 1000,

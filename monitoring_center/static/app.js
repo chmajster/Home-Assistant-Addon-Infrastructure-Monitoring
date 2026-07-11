@@ -1,48 +1,9 @@
-const state = {
-  monitors: [],
-  groups: [],
-  monitorTypes: [],
-  presets: [],
-  summary: null,
-  diagnostics: null,
-  incidents: [],
-  topology: { nodes: [], edges: [] },
-  topologyConnectMode: false,
-  topologyConnectSource: null,
-  settings: null,
-  selectedMonitorId: null,
-  currentTest: null,
-  monitorQuery: "",
-  monitorTypeFilter: "all",
-  monitorStatusFilter: "all",
-  monitorGroupFilter: "all",
-  monitorMaintenanceFilter: "all",
-  monitorEnabledFilter: "all",
-  monitorSort: "name",
-  monitorView: "cards",
-  dashboardTypeFilter: "all",
-  selectedMonitorIds: new Set(),
-  bulkSelectionMode: false,
-  events: [],
-  eventTypeFilter: "",
-  eventQuery: "",
-  incidentStatusFilter: "all",
-  incidentMonitorFilter: "",
-  lastRefreshedAt: null,
-  detailHistoryRows: [],
-  detailHistoryPage: 1,
-  detailHistoryPageSize: 100,
-  detailHistoryFilters: {
-    from: "",
-    to: "",
-    status: "all",
-    search: "",
-    sort: "date_desc",
-  },
-  discoveryProposals: [],
-};
+import { api } from "./api.js";
+import { state } from "./state.js";
+import { $, $$, debounce } from "./utils.js";
+import { activateView } from "./router.js";
+import { installDialogAccessibility } from "./components/dialogs.js";
 
-const API_BASE = window.location.pathname === "/" ? "" : window.location.pathname.replace(/\/$/, "");
 const URL_MONITOR_TYPES = ["http_status", "http_hash", "rest_api"];
 const MONITOR_TYPE_CATEGORIES = {
   ping_host: "network",
@@ -57,17 +18,23 @@ const MONITOR_TYPE_CATEGORIES = {
   monitoring_center_health: "system",
 };
 
-const $ = (selector, root = document) => root.querySelector(selector);
-const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
 let testRunTimer;
+let refreshController;
+let refreshPromise;
 
 document.addEventListener("DOMContentLoaded", () => {
   initTheme();
   initDensity();
   bindNavigation();
   bindForms();
+  installDialogAccessibility();
+  window.addEventListener("monitoring-api-error", (event) => toast(event.detail, "error"));
   refreshAll();
-  setInterval(refreshAll, 30000);
+  setInterval(() => { if (!document.hidden) refreshAll(); }, 30000);
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) refreshController?.abort();
+    else refreshAll();
+  });
 });
 
 function bindNavigation() {
@@ -267,26 +234,18 @@ function applyDetailHistoryRange(range) {
 }
 
 async function refreshAll() {
-  const [summary, monitors, groups, settings, monitorTypes, presets, diagnostics, incidents, topology] = await Promise.all([
-    api("/api/summary"),
-    api("/api/monitors"),
-    api("/api/groups"),
-    api("/api/settings"),
-    api("/api/monitor-types"),
-    api("/api/presets"),
-    api("/api/diagnostics/full"),
-    api("/api/incidents?limit=100"),
-    api("/api/topology"),
-  ]);
-  state.summary = summary;
-  state.monitors = monitors;
-  state.groups = groups;
-  state.settings = settings;
-  state.monitorTypes = monitorTypes;
-  state.presets = presets;
-  state.diagnostics = diagnostics;
-  state.incidents = incidents;
-  state.topology = topology;
+  if (document.hidden) return;
+  if (refreshPromise) return refreshPromise;
+  refreshController = new AbortController();
+  refreshPromise = api("/api/bootstrap", { signal: refreshController.signal }).then((bootstrap) => {
+  state.summary = bootstrap.summary;
+  state.monitors = bootstrap.monitors;
+  state.groups = bootstrap.groups;
+  state.settings = bootstrap.settings;
+  state.monitorTypes = bootstrap.monitor_types;
+  state.presets = bootstrap.presets;
+  state.incidents = bootstrap.incidents;
+  state.topology = bootstrap.topology;
   state.lastRefreshedAt = new Date().toISOString();
   renderGlobalStatus();
   $("#lastRefreshAt").textContent = `Odświeżono: ${formatDate(state.lastRefreshedAt)}`;
@@ -310,6 +269,10 @@ async function refreshAll() {
   if ($("#monitorTestRun").classList.contains("active") && state.currentTest?.monitorId) {
     renderMonitorTestRun();
   }
+  }).catch((error) => {
+    if (error.name !== "AbortError") console.warn("Częściowe odświeżenie nie powiodło się", error);
+  }).finally(() => { refreshPromise = null; refreshController = null; });
+  return refreshPromise;
 }
 
 async function manualRefresh() {
@@ -317,34 +280,6 @@ async function manualRefresh() {
   toast("Odświeżono dane.");
 }
 
-async function api(path, options = {}) {
-  const response = await fetch(`${API_BASE}${path}`, {
-    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
-    ...options,
-  });
-  if (!response.ok) {
-    let message = response.statusText;
-    try {
-      const body = await response.json();
-      message = formatApiError(body.detail || message);
-    } catch (_) {}
-    toast(message, "error");
-    throw new Error(message);
-  }
-  const contentType = response.headers.get("content-type") || "";
-  return contentType.includes("application/json") ? response.json() : response.text();
-}
-
-function formatApiError(detail) {
-  if (Array.isArray(detail)) {
-    return detail.map((item) => {
-      const field = Array.isArray(item.loc) ? item.loc.filter((part) => part !== "body").join(".") : "";
-      return `${field ? field + ": " : ""}${item.msg || "Nieprawidlowe dane"}`;
-    }).join("; ");
-  }
-  if (detail && typeof detail === "object") return JSON.stringify(detail);
-  return String(detail || "Wystapil blad");
-}
 
 function initTheme() {
   const saved = localStorage.getItem("monitoring-theme") || "auto";
@@ -407,14 +342,7 @@ function persistMonitorUiState() {
 }
 
 function showView(viewId, activeTab = viewId) {
-  $$(".view").forEach((view) => view.classList.remove("active"));
-  $(`#${viewId}`)?.classList.add("active");
-  $$(".tab").forEach((tab) => {
-    const isActive = tab.dataset.tab === activeTab;
-    tab.classList.toggle("active", isActive);
-    if (isActive) tab.setAttribute("aria-current", "page");
-    else tab.removeAttribute("aria-current");
-  });
+  activateView(viewId, activeTab);
 }
 
 function renderGlobalStatus() {
@@ -2922,6 +2850,8 @@ async function saveSettings(event) {
     retry_delay_seconds: Number(form.elements.retry_delay_seconds.value),
     max_page_size_mb: Number(form.elements.max_page_size_mb.value),
     block_private_networks: form.elements.block_private_networks.checked,
+    allow_private_monitor_targets: state.settings.allow_private_monitor_targets !== false,
+    allow_private_webhooks: form.elements.allow_private_webhooks.checked,
     publish_home_assistant_entities: form.elements.publish_home_assistant_entities.checked,
     publish_home_assistant_events: form.elements.publish_home_assistant_events.checked,
     entity_prefix: form.elements.entity_prefix.value.trim(),
@@ -3372,14 +3302,6 @@ function formatBytes(value) {
     index += 1;
   }
   return `${size.toFixed(size >= 10 ? 1 : 2)} ${units[index]}`;
-}
-
-function debounce(fn, delay = 200) {
-  let timer;
-  return (...args) => {
-    clearTimeout(timer);
-    timer = setTimeout(() => fn(...args), delay);
-  };
 }
 
 async function runWithButtonLoading(button, fn) {

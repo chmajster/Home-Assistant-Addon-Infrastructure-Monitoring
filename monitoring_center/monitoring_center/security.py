@@ -19,6 +19,19 @@ SECRET_KEYS = {
     "token",
     "webhook_url",
 }
+_SECRET_VALUES: set[str] = set()
+
+
+def register_secret(value: Any) -> None:
+    if isinstance(value, str) and len(value) >= 4 and value != MASKED_SECRET:
+        _SECRET_VALUES.add(value)
+
+
+def redact_text(value: str) -> str:
+    redacted = value
+    for secret in sorted(_SECRET_VALUES, key=len, reverse=True):
+        redacted = redacted.replace(secret, MASKED_SECRET)
+    return redacted
 
 
 def is_secret_key(key: str) -> bool:
@@ -40,6 +53,8 @@ def sanitize_secrets(value: Any) -> Any:
         return sanitized
     if isinstance(value, list):
         return [sanitize_secrets(item) for item in value]
+    if isinstance(value, str):
+        return redact_text(value)
     return value
 
 

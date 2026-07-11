@@ -5,6 +5,8 @@ import sys
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
+from .security import redact_text
+
 LEVELS = {
     "trace": logging.DEBUG,
     "debug": logging.DEBUG,
@@ -14,6 +16,14 @@ LEVELS = {
     "error": logging.ERROR,
     "fatal": logging.CRITICAL,
 }
+
+
+class SecretRedactionFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        record.msg = redact_text(str(record.msg))
+        if record.args:
+            record.args = tuple(redact_text(str(arg)) for arg in record.args) if isinstance(record.args, tuple) else ()
+        return True
 
 
 def configure_logging(level_name: str, log_file: Path) -> None:
@@ -27,6 +37,7 @@ def configure_logging(level_name: str, log_file: Path) -> None:
 
     stream_handler = logging.StreamHandler(sys.stdout)
     stream_handler.setFormatter(formatter)
+    stream_handler.addFilter(SecretRedactionFilter())
 
     file_handler = RotatingFileHandler(
         log_file,
@@ -35,5 +46,6 @@ def configure_logging(level_name: str, log_file: Path) -> None:
         encoding="utf-8",
     )
     file_handler.setFormatter(formatter)
+    file_handler.addFilter(SecretRedactionFilter())
 
     logging.basicConfig(level=level, handlers=[stream_handler, file_handler], force=True)

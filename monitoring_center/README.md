@@ -1,5 +1,37 @@
 # Monitoring Center
 
+## Aktualizacja 0.11.0 → 0.12.0
+
+Migracja in-place zachowuje monitory, grupy, historię, incydenty i topologię. Pierwszy start tworzy backup
+przez SQLite Backup API, wykonuje migracje schematu 11–14 i przenosi jawne sekrety do `monitor_secrets`.
+Klucz `/data/monitoring_center.key` ma tryb `0600` i musi być archiwizowany razem z bazą. Brak lub uszkodzenie
+klucza przy istniejących szyfrogramach daje `not_ready`; nowy klucz nie jest wtedy generowany automatycznie.
+
+## Backup i restore
+
+- `POST /api/database/backups` tworzy spójny backup aktywnej bazy.
+- `GET /api/database/backups/{name}` pobiera backup.
+- `POST /api/database/restore?confirm=true` sprawdza integralność i tworzy kopię przed odtworzeniem.
+- Eksport UI nie zawiera sekretów, a import wartości `********` zachowuje dotychczasowy sekret.
+
+## Cursor pagination
+
+Endpointy `/api/v2/history`, `/api/v2/events`, `/api/v2/incidents`, `/api/v2/monitors` i
+`/api/v2/monitors/{id}/snapshots` zwracają `items` oraz `pagination` z polami `limit`, `next_cursor`,
+`has_more` i `total`. Stare endpointy tablicowe pozostają przejściowo dostępne.
+
+## Home Assistant Ingress i encje
+
+Frontend wylicza bazę API ze ścieżki Ingress. Proxy są ograniczone przez `MONITORING_CENTER_TRUSTED_PROXIES`.
+Encje używają stabilnego ID, np. `binary_sensor.monitoring_center_15_status`, a nazwa jest `friendly_name`.
+REST States API nie oferuje trwałego `unique_id` ani Device Registry; pełne grupowanie wymagałoby osobnej
+integracji towarzyszącej albo opcjonalnego MQTT Discovery.
+
+## Polityka sieciowa
+
+Prywatne cele monitorów pozostają dozwolone. Prywatne webhooki są domyślnie blokowane i wymagają jawnego
+`allow_private_webhooks: true`. Discovery sieciowe wymaga CIDR i ma limity hostów, czasu oraz współbieżności.
+
 Monitoring Center to lokalny dodatek Home Assistant do wspólnego monitorowania urządzeń, usług i stron WWW. Monitoring WWW jest typem monitora w tym samym widoku `Monitoring`, korzysta z tej samej historii i tych samych akcji co pozostałe monitory. Dodatek działa bez chmury, używa własnej bazy SQLite w `/data` i udostępnia panel przez Ingress w sidebarze Home Assistant.
 
 ## Funkcje

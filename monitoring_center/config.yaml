@@ -1,8 +1,8 @@
 name: Monitoring Center
-version: "0.11.0"
+version: "0.12.0"
 slug: monitoring_center
 description: Local network and website monitoring center for Home Assistant
-url: https://github.com/chmajster/Home-Assistant-Monitoring
+url: https://github.com/chmajster/Home-Assistant-Addon-Infrastructure-Monitoring
 arch:
   - aarch64
   - amd64
@@ -33,6 +33,9 @@ options:
   retry_delay_seconds: 10
   max_page_size_mb: 5
   block_private_networks: false
+  allow_private_monitor_targets: true
+  allow_private_webhooks: false
+  allowed_network_cidrs: []
   publish_home_assistant_entities: true
   publish_home_assistant_events: true
   entity_prefix: monitoring_center
@@ -49,6 +52,10 @@ schema:
   retry_delay_seconds: int(0,3600)
   max_page_size_mb: float(0,)
   block_private_networks: bool
+  allow_private_monitor_targets: bool
+  allow_private_webhooks: bool
+  allowed_network_cidrs:
+    - str
   publish_home_assistant_entities: bool
   publish_home_assistant_events: bool
   entity_prefix: str

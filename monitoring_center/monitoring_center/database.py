@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
+import time
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -26,16 +27,49 @@ class Database:
         with self._lock:
             self._conn.close()
 
+    def backup(self, destination: Path) -> Path:
+        """Create a consistent backup of a live WAL database with SQLite's backup API."""
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        with self._lock, sqlite3.connect(destination) as target:
+            self._conn.backup(target)
+        return destination
+
+    def restore(self, source: Path) -> None:
+        with self._lock, sqlite3.connect(source) as origin:
+            integrity = origin.execute("PRAGMA integrity_check").fetchone()
+            if not integrity or integrity[0] != "ok":
+                raise ValueError("Backup SQLite nie przeszedł kontroli integralności")
+            origin.backup(self._conn)
+            self._conn.execute("PRAGMA foreign_keys=ON")
+
+    def checkpoint(self, truncate: bool = False) -> dict[str, Any]:
+        mode = "TRUNCATE" if truncate else "PASSIVE"
+        with self._lock:
+            row = self._conn.execute(f"PRAGMA wal_checkpoint({mode})").fetchone()
+        return {"busy": row[0], "log_pages": row[1], "checkpointed_pages": row[2]} if row else {}
+
+    def optimize(self, vacuum: bool = False) -> None:
+        with self._lock:
+            self._conn.execute("PRAGMA optimize")
+            if vacuum:
+                self._conn.execute("VACUUM")
+
     def execute(self, sql: str, params: Iterable[Any] = ()) -> sqlite3.Cursor:
+        started = time.monotonic()
         with self._lock:
             cursor = self._conn.execute(sql, tuple(params))
             if self._transaction_depth == 0:
                 self._conn.commit()
+            elapsed_ms = (time.monotonic() - started) * 1000
+            if elapsed_ms >= 250:
+                import logging
+
+                logging.getLogger(__name__).warning("Slow SQLite statement (%.1f ms): %s", elapsed_ms, sql[:120])
             return cursor
 
     def executemany(self, sql: str, params: Iterable[Iterable[Any]]) -> None:
         with self._lock:
-            self._conn.executemany(sql, params)
+            self._conn.executemany(sql, [tuple(row) for row in params])
             if self._transaction_depth == 0:
                 self._conn.commit()
 

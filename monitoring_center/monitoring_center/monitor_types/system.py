@@ -38,7 +38,9 @@ class DockerContainerMonitor:
         try:
             result = await run_ssh_command(config, command)
         except Exception as exc:
-            return CheckResult("offline", error=str(exc), details={"container_name": name}, events=["docker_container_error"])
+            return CheckResult(
+                "offline", error=str(exc), details={"container_name": name}, events=["docker_container_error"]
+            )
         details = _parse_key_values(result.stdout)
         details["container_name"] = name
         logs = details.pop("logs", "")
@@ -48,18 +50,36 @@ class DockerContainerMonitor:
         events = ["docker_container_ok"]
         error = None
         if details.get("docker") != "ok":
-            return CheckResult("offline", response_ms=result.elapsed_ms, error="Docker unavailable", details=details, events=["docker_container_error"])
+            return CheckResult(
+                "offline",
+                response_ms=result.elapsed_ms,
+                error="Docker unavailable",
+                details=details,
+                events=["docker_container_error"],
+            )
         if details.get("exists") != "yes":
-            return CheckResult("error", response_ms=result.elapsed_ms, error="Docker container does not exist", details=details, events=["docker_container_error"])
+            return CheckResult(
+                "error",
+                response_ms=result.elapsed_ms,
+                error="Docker container does not exist",
+                details=details,
+                events=["docker_container_error"],
+            )
         if config.get("check_running") and details.get("running") != "running":
             status, error, events = "error", "Docker container is not running", ["docker_container_error"]
         if status != "error" and config.get("check_health") and details.get("health") == "unhealthy":
             status, error, events = "error", "Docker container is unhealthy", ["docker_container_unhealthy"]
         if status == "online" and int(details.get("restart_count") or 0) > int(config.get("max_restart_count") or 0):
-            status, error, events = "warning", "Docker restart count exceeded", ["docker_container_restarted", "docker_container_warning"]
+            status, error, events = (
+                "warning",
+                "Docker restart count exceeded",
+                ["docker_container_restarted", "docker_container_warning"],
+            )
         if status == "online" and _percent(details.get("cpu_percent")) > float(config.get("cpu_warning_percent") or 0):
             status, error, events = "warning", "Docker CPU usage exceeded", ["docker_container_warning"]
-        if status == "online" and _percent(details.get("memory_percent")) > float(config.get("memory_warning_percent") or 0):
+        if status == "online" and _percent(details.get("memory_percent")) > float(
+            config.get("memory_warning_percent") or 0
+        ):
             status, error, events = "warning", "Docker memory usage exceeded", ["docker_container_warning"]
         if logs and regex_matches(config.get("log_error_regex"), logs):
             details["log_regex_alert"] = True
@@ -114,7 +134,9 @@ class LinuxHostMonitor:
         try:
             result = await run_ssh_command(monitor["config"], command)
         except Exception as exc:
-            return CheckResult("offline", error=str(exc), details={"target": monitor["target"]}, events=["linux_host_error"])
+            return CheckResult(
+                "offline", error=str(exc), details={"target": monitor["target"]}, events=["linux_host_error"]
+            )
         details = _parse_key_values(result.stdout)
         status, error, events = _linux_status(details, monitor["config"])
         return CheckResult(status, response_ms=result.elapsed_ms, error=error, details=details, events=events)
@@ -148,18 +170,54 @@ class DiskUsageMonitor:
         details = _parse_key_values(result.stdout)
         details["mountpoint"] = mount
         if details.get("exists") != "yes":
-            return CheckResult("error", response_ms=result.elapsed_ms, error="Mountpoint does not exist", details=details, events=["disk_usage_error"])
+            return CheckResult(
+                "error",
+                response_ms=result.elapsed_ms,
+                error="Mountpoint does not exist",
+                details=details,
+                events=["disk_usage_error"],
+            )
         used = _float(details.get("used_percent"))
         free_gb = _float(details.get("free_gb"))
         inode_used = _float(details.get("inode_used_percent"))
         if monitor["config"].get("check_readonly") and details.get("readonly") == "yes":
-            return CheckResult("error", response_ms=result.elapsed_ms, error="Filesystem is read-only", details=details, events=["disk_readonly"])
-        if used >= float(monitor["config"].get("error_percent") or 95) or free_gb <= float(monitor["config"].get("error_free_gb") or 0):
-            return CheckResult("error", response_ms=result.elapsed_ms, error="Disk usage threshold exceeded", details=details, events=["disk_usage_error"])
-        if monitor["config"].get("check_inodes") and inode_used >= float(monitor["config"].get("inode_warning_percent") or 85):
-            return CheckResult("warning", response_ms=result.elapsed_ms, error="Disk inode usage threshold exceeded", details=details, events=["disk_inode_warning"])
-        if used >= float(monitor["config"].get("warning_percent") or 85) or free_gb <= float(monitor["config"].get("warning_free_gb") or 0):
-            return CheckResult("warning", response_ms=result.elapsed_ms, error="Disk usage warning threshold exceeded", details=details, events=["disk_usage_warning"])
+            return CheckResult(
+                "error",
+                response_ms=result.elapsed_ms,
+                error="Filesystem is read-only",
+                details=details,
+                events=["disk_readonly"],
+            )
+        if used >= float(monitor["config"].get("error_percent") or 95) or free_gb <= float(
+            monitor["config"].get("error_free_gb") or 0
+        ):
+            return CheckResult(
+                "error",
+                response_ms=result.elapsed_ms,
+                error="Disk usage threshold exceeded",
+                details=details,
+                events=["disk_usage_error"],
+            )
+        if monitor["config"].get("check_inodes") and inode_used >= float(
+            monitor["config"].get("inode_warning_percent") or 85
+        ):
+            return CheckResult(
+                "warning",
+                response_ms=result.elapsed_ms,
+                error="Disk inode usage threshold exceeded",
+                details=details,
+                events=["disk_inode_warning"],
+            )
+        if used >= float(monitor["config"].get("warning_percent") or 85) or free_gb <= float(
+            monitor["config"].get("warning_free_gb") or 0
+        ):
+            return CheckResult(
+                "warning",
+                response_ms=result.elapsed_ms,
+                error="Disk usage warning threshold exceeded",
+                details=details,
+                events=["disk_usage_warning"],
+            )
         return CheckResult("online", response_ms=result.elapsed_ms, details=details)
 
 
@@ -189,15 +247,39 @@ class BackupMonitor:
             return CheckResult("offline", error=str(exc), details={"path": cfg["path"]}, events=["backup_failed"])
         details = _parse_key_values(result.stdout)
         if details.get("exists") != "yes":
-            return CheckResult("error", response_ms=result.elapsed_ms, error="Backup missing", details=details, events=["backup_missing"])
+            return CheckResult(
+                "error",
+                response_ms=result.elapsed_ms,
+                error="Backup missing",
+                details=details,
+                events=["backup_missing"],
+            )
         age_hours = _float(details.get("age_hours"))
         size_mb = _float(details.get("size_mb"))
         if size_mb <= 0:
-            return CheckResult("error", response_ms=result.elapsed_ms, error="Backup has zero size", details=details, events=["backup_failed"])
+            return CheckResult(
+                "error",
+                response_ms=result.elapsed_ms,
+                error="Backup has zero size",
+                details=details,
+                events=["backup_failed"],
+            )
         if size_mb < float(cfg.get("min_size_mb") or 0) or size_mb > float(cfg.get("max_size_mb") or 0):
-            return CheckResult("warning", response_ms=result.elapsed_ms, error="Backup size outside threshold", details=details, events=["backup_size_warning"])
+            return CheckResult(
+                "warning",
+                response_ms=result.elapsed_ms,
+                error="Backup size outside threshold",
+                details=details,
+                events=["backup_size_warning"],
+            )
         if age_hours > float(cfg.get("max_age_hours") or 0):
-            return CheckResult("warning", response_ms=result.elapsed_ms, error="Backup is too old", details=details, events=["backup_old"])
+            return CheckResult(
+                "warning",
+                response_ms=result.elapsed_ms,
+                error="Backup is too old",
+                details=details,
+                events=["backup_old"],
+            )
         return CheckResult("online", response_ms=result.elapsed_ms, details=details, events=["backup_ok"])
 
 
@@ -219,12 +301,20 @@ class FileExistsMonitor(BackupMonitor):
     async def check(self, monitor: dict[str, Any], context: MonitorContext) -> CheckResult:
         path = monitor["config"]["path"]
         try:
-            result = await run_ssh_command(monitor["config"], f"test -e {quote(path)} && echo exists=yes || echo exists=no")
+            result = await run_ssh_command(
+                monitor["config"], f"test -e {quote(path)} && echo exists=yes || echo exists=no"
+            )
         except Exception as exc:
             return CheckResult("offline", error=str(exc), details={"path": path}, events=["file_missing"])
         details = _parse_key_values(result.stdout)
         status = "online" if details.get("exists") == "yes" else "error"
-        return CheckResult(status, response_ms=result.elapsed_ms, error=None if status == "online" else "File missing", details=details, events=[] if status == "online" else ["file_missing"])
+        return CheckResult(
+            status,
+            response_ms=result.elapsed_ms,
+            error=None if status == "online" else "File missing",
+            details=details,
+            events=[] if status == "online" else ["file_missing"],
+        )
 
 
 class FileAgeMonitor(BackupMonitor):
@@ -249,18 +339,30 @@ class FileHashMonitor(BackupMonitor):
     async def check(self, monitor: dict[str, Any], context: MonitorContext) -> CheckResult:
         path = monitor["config"]["path"]
         algo = monitor["config"].get("hash_algorithm") or "sha256"
-        command = f"test -f {quote(path)} && {quote(algo)}sum {quote(path)} | awk '{{print \"hash=\"$1}}' || echo exists=no"
+        command = (
+            f"test -f {quote(path)} && {quote(algo)}sum {quote(path)} | awk '{{print \"hash=\"$1}}' || echo exists=no"
+        )
         try:
             result = await run_ssh_command(monitor["config"], command)
         except Exception as exc:
             return CheckResult("offline", error=str(exc), details={"path": path}, events=["file_missing"])
         details = _parse_key_values(result.stdout)
         if details.get("exists") == "no":
-            return CheckResult("error", response_ms=result.elapsed_ms, error="File missing", details=details, events=["file_missing"])
+            return CheckResult(
+                "error", response_ms=result.elapsed_ms, error="File missing", details=details, events=["file_missing"]
+            )
         previous = monitor["config"].get("last_hash")
         changed = bool(previous and previous != details.get("hash"))
         details["last_hash"] = details.get("hash")
-        return CheckResult("warning" if changed else "online", response_ms=result.elapsed_ms, content_changed=changed, content_hash=details.get("hash"), error="File hash changed" if changed else None, details=details, events=["file_hash_changed"] if changed else [])
+        return CheckResult(
+            "warning" if changed else "online",
+            response_ms=result.elapsed_ms,
+            content_changed=changed,
+            content_hash=details.get("hash"),
+            error="File hash changed" if changed else None,
+            details=details,
+            events=["file_hash_changed"] if changed else [],
+        )
 
 
 class DirectorySizeMonitor(BackupMonitor):
@@ -279,7 +381,13 @@ class DirectorySizeMonitor(BackupMonitor):
         size = _float(details.get("size_mb"))
         max_size = float(monitor["config"].get("max_size_mb") or 50000)
         status = "warning" if size > max_size else "online"
-        return CheckResult(status, response_ms=result.elapsed_ms, error="Directory size threshold exceeded" if status == "warning" else None, details=details, events=["directory_size_warning"] if status == "warning" else [])
+        return CheckResult(
+            status,
+            response_ms=result.elapsed_ms,
+            error="Directory size threshold exceeded" if status == "warning" else None,
+            details=details,
+            events=["directory_size_warning"] if status == "warning" else [],
+        )
 
 
 class DirectoryFileCountMonitor(BackupMonitor):
@@ -294,12 +402,20 @@ class DirectoryFileCountMonitor(BackupMonitor):
         try:
             result = await run_ssh_command(monitor["config"], command)
         except Exception as exc:
-            return CheckResult("offline", error=str(exc), details={"path": path}, events=["directory_file_count_warning"])
+            return CheckResult(
+                "offline", error=str(exc), details={"path": path}, events=["directory_file_count_warning"]
+            )
         details = _parse_key_values(result.stdout)
         count = int(_float(details.get("file_count")))
         max_count = int(monitor["config"].get("max_file_count") or 1000000)
         status = "warning" if count > max_count else "online"
-        return CheckResult(status, response_ms=result.elapsed_ms, error="Directory file count threshold exceeded" if status == "warning" else None, details=details, events=["directory_file_count_warning"] if status == "warning" else [])
+        return CheckResult(
+            status,
+            response_ms=result.elapsed_ms,
+            error="Directory file count threshold exceeded" if status == "warning" else None,
+            details=details,
+            events=["directory_file_count_warning"] if status == "warning" else [],
+        )
 
 
 class LogRegexMonitor:
@@ -329,15 +445,39 @@ class LogRegexMonitor:
             return CheckResult("offline", error=str(exc), details={"path": cfg.get("path")}, events=["log_error_match"])
         output_hash = hashlib.sha256(result.stdout.encode()).hexdigest()
         if cfg.get("only_new_matches") and cfg.get("last_output_hash") == output_hash:
-            return CheckResult("online", response_ms=result.elapsed_ms, details={"match_count": 0, "last_output_hash": output_hash})
+            return CheckResult(
+                "online", response_ms=result.elapsed_ms, details={"match_count": 0, "last_output_hash": output_hash}
+            )
         matches = [line for line in result.stdout.splitlines() if line.strip()]
-        details = {"match_count": len(matches), "matches": matches[: int(cfg.get("max_matches") or 20)], "last_output_hash": output_hash}
+        details = {
+            "match_count": len(matches),
+            "matches": matches[: int(cfg.get("max_matches") or 20)],
+            "last_output_hash": output_hash,
+        }
         if any(regex_matches(cfg.get("error_regex"), line) for line in matches):
-            return CheckResult("error", response_ms=result.elapsed_ms, error="Log error regex matched", details=details, events=["log_error_match"])
+            return CheckResult(
+                "error",
+                response_ms=result.elapsed_ms,
+                error="Log error regex matched",
+                details=details,
+                events=["log_error_match"],
+            )
         if any(regex_matches(cfg.get("warning_regex"), line) for line in matches):
-            return CheckResult("warning", response_ms=result.elapsed_ms, error="Log warning regex matched", details=details, events=["log_warning_match"])
+            return CheckResult(
+                "warning",
+                response_ms=result.elapsed_ms,
+                error="Log warning regex matched",
+                details=details,
+                events=["log_warning_match"],
+            )
         if matches:
-            return CheckResult("warning", response_ms=result.elapsed_ms, error="Log regex matched", details=details, events=["log_regex_match"])
+            return CheckResult(
+                "warning",
+                response_ms=result.elapsed_ms,
+                error="Log regex matched",
+                details=details,
+                events=["log_regex_match"],
+            )
         return CheckResult("online", response_ms=result.elapsed_ms, details=details)
 
     def _command(self, cfg: dict[str, Any]) -> str:
@@ -423,7 +563,11 @@ def _linux_status(details: dict[str, Any], config: dict[str, Any]) -> tuple[str,
         return "error", "Memory error threshold exceeded", ["linux_memory_warning", "linux_host_error"]
     if _float(details.get("disk_percent")) >= float(config.get("disk_error_percent") or 95):
         return "error", "Disk error threshold exceeded", ["linux_disk_warning", "linux_host_error"]
-    failed_services = [key.removeprefix("service_") for key, value in details.items() if key.startswith("service_") and value != "active"]
+    failed_services = [
+        key.removeprefix("service_")
+        for key, value in details.items()
+        if key.startswith("service_") and value != "active"
+    ]
     if failed_services:
         details["failed_services"] = failed_services
         return "error", "Systemd service failed", ["linux_service_failed", "linux_host_error"]

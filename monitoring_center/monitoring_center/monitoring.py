@@ -21,6 +21,7 @@ from .discovery import DiscoveryService
 from .ha import HomeAssistantClient
 from .monitor_types import PRESETS, get_plugin, list_types, resolve_type
 from .monitor_types.base import CheckResult, MonitorContext, is_success_status
+from .secret_store import SecretStore
 from .security import preserve_existing_secrets, sanitize_secrets
 from .validators import normalize_url_key
 
@@ -63,23 +64,47 @@ def parse_time(value: str | None) -> datetime | None:
     return parsed.astimezone(UTC)
 
 
+def _has_cycle(graph: dict[int, set[int]]) -> bool:
+    visiting: set[int] = set()
+    visited: set[int] = set()
+
+    def visit(node: int) -> bool:
+        if node in visiting:
+            return True
+        if node in visited:
+            return False
+        visiting.add(node)
+        if any(visit(child) for child in graph.get(node, set())):
+            return True
+        visiting.remove(node)
+        visited.add(node)
+        return False
+
+    return any(visit(node) for node in graph)
+
+
 class MonitorService:
-    def __init__(self, db: Database, config: AppConfig, ha: HomeAssistantClient) -> None:
+    def __init__(
+        self, db: Database, config: AppConfig, ha: HomeAssistantClient, secret_store: SecretStore | None = None
+    ) -> None:
         self.db = db
         self.config = config
         self.ha = ha
         self.discovery = DiscoveryService(ha)
+        self.secrets = secret_store or SecretStore(db, db.path.parent / "monitoring_center.key")
+        self.secrets.migrate_plaintext()
         self._apply_persisted_settings()
         self.running: set[int] = set()
         self.active_checks: set[int] = set()
         self.queued_checks: set[int] = set()
-        self._check_semaphore = asyncio.Semaphore(max(int(self.config.max_concurrent_checks), 1))
+        self._limit_condition = asyncio.Condition()
+        self._limit_active = 0
         self._stop = asyncio.Event()
-        self._last_started: dict[int, float] = {}
         self._last_tick_at: str | None = None
         self._scheduler_error_count = 0
         self._last_scheduler_error: str | None = None
         self._tasks: set[asyncio.Task[Any]] = set()
+        self._baseline_cache: dict[tuple[int, str, float, int], tuple[float, dict[str, Any] | None]] = {}
         self.started_at = utc_now()
 
     async def scheduler(self) -> None:
@@ -92,7 +117,10 @@ class MonitorService:
                 self._scheduler_error_count += 1
                 self._last_scheduler_error = str(exc)
                 LOGGER.exception("Scheduler tick failed")
-            await asyncio.sleep(5)
+            try:
+                await asyncio.wait_for(self._stop.wait(), timeout=2)
+            except TimeoutError:
+                pass
 
     def stop(self) -> None:
         self._stop.set()
@@ -101,16 +129,26 @@ class MonitorService:
 
     async def _tick(self) -> None:
         self._last_tick_at = utc_now()
-        now = time.monotonic()
-        monitors = self.list_monitors(enabled_only=True, include_secrets=True)
-        for monitor in monitors:
-            monitor_id = int(monitor["id"])
-            interval = int(monitor["interval_seconds"])
-            last_started = self._last_started.get(monitor_id, 0)
-            if monitor_id in self.running or now - last_started < interval:
-                continue
-            self._last_started[monitor_id] = now
-            self._schedule_check_task(monitor_id)
+        await self._process_alert_retries()
+        queue_limit = max(int(self.config.max_concurrent_checks) * 4, 20)
+        due = self.db.fetchall(
+            """SELECT s.monitor_id FROM scheduler_state s JOIN monitors m ON m.id=s.monitor_id
+               WHERE m.enabled=1 AND s.next_check_at <= datetime('now')
+               ORDER BY s.next_check_at, s.monitor_id LIMIT ?""",
+            (queue_limit + 1,),
+        )
+        for position, row in enumerate(due):
+            monitor_id = int(row["monitor_id"])
+            if position >= queue_limit:
+                self.db.execute(
+                    "UPDATE scheduler_state SET last_skip_reason='queue_full' WHERE monitor_id=?", (monitor_id,)
+                )
+            elif monitor_id in self.running:
+                self.db.execute(
+                    "UPDATE scheduler_state SET last_skip_reason='already_running' WHERE monitor_id=?", (monitor_id,)
+                )
+            else:
+                self._schedule_check_task(monitor_id)
 
     def _schedule_check_task(self, monitor_id: int) -> None:
         task = asyncio.create_task(self.run_check(monitor_id), name=f"monitor-check-{monitor_id}")
@@ -127,6 +165,10 @@ class MonitorService:
             self._scheduler_error_count += 1
             self._last_scheduler_error = str(exc)
             LOGGER.exception("Scheduled monitor check task failed")
+
+    async def wait_for_tasks(self) -> None:
+        if self._tasks:
+            await asyncio.gather(*list(self._tasks), return_exceptions=True)
 
     def list_monitors(self, enabled_only: bool = False, include_secrets: bool = False) -> list[dict[str, Any]]:
         where = "WHERE m.enabled = 1" if enabled_only else ""
@@ -173,7 +215,7 @@ class MonitorService:
             "INSERT INTO monitor_groups(name, description, color) VALUES (?, ?, ?)",
             (payload["name"].strip(), payload.get("description"), payload.get("color") or "#0f766e"),
         )
-        return self.get_group(int(cursor.lastrowid))
+        return self.get_group(int(cursor.lastrowid or 0))
 
     def get_group(self, group_id: int) -> dict[str, Any]:
         row = self.db.fetchone("SELECT * FROM monitor_groups WHERE id = ?", (group_id,))
@@ -224,47 +266,85 @@ class MonitorService:
             }
             for row in self.db.fetchall("SELECT * FROM topology_edges ORDER BY id")
         ]
-        return {"nodes": nodes, "edges": edges}
+        meta = self.db.fetchone("SELECT version FROM topology_meta WHERE singleton=1") or {"version": 1}
+        return {"nodes": nodes, "edges": edges, "version": int(meta["version"])}
 
     def save_topology(self, payload: dict[str, Any]) -> dict[str, Any]:
         nodes = payload.get("nodes") or []
         edges = payload.get("edges") or []
         old_to_new: dict[int, int] = {}
         with self.db.transaction():
-            self.db.execute("DELETE FROM topology_edges")
-            self.db.execute("DELETE FROM topology_nodes")
+            meta = self.db.fetchone("SELECT version FROM topology_meta WHERE singleton=1") or {"version": 1}
+            expected_version = payload.get("version")
+            if expected_version is not None and int(expected_version) != int(meta["version"]):
+                raise HTTPException(status_code=409, detail="Topologia została zmieniona w innej sesji")
+            retained_nodes: set[int] = set()
             for node in nodes:
                 old_id = int(node["id"]) if node.get("id") else None
-                cursor = self.db.execute(
-                    """
-                    INSERT INTO topology_nodes(name, type, monitor_id, icon, x, y, metadata_json)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        str(node["name"]).strip(),
-                        node.get("type") or "other",
-                        node.get("monitor_id"),
-                        node.get("icon"),
-                        float(node.get("x") or 0),
-                        float(node.get("y") or 0),
-                        dumps_json(node.get("metadata") or {}),
-                    ),
+                values = (
+                    str(node["name"]).strip(),
+                    node.get("type") or "other",
+                    node.get("monitor_id"),
+                    node.get("icon"),
+                    float(node.get("x") or 0),
+                    float(node.get("y") or 0),
+                    dumps_json(node.get("metadata") or {}),
                 )
-                new_id = int(cursor.lastrowid)
+                existing = self.db.fetchone("SELECT id FROM topology_nodes WHERE id=?", (old_id,)) if old_id else None
+                if existing:
+                    self.db.execute(
+                        """UPDATE topology_nodes SET name=?,type=?,monitor_id=?,icon=?,x=?,y=?,metadata_json=?,
+                           updated_at=datetime('now') WHERE id=?""",
+                        (*values, old_id),
+                    )
+                    new_id = int(old_id or 0)
+                else:
+                    cursor = self.db.execute(
+                        """INSERT INTO topology_nodes(name,type,monitor_id,icon,x,y,metadata_json)
+                           VALUES (?,?,?,?,?,?,?)""",
+                        values,
+                    )
+                    new_id = int(cursor.lastrowid or 0)
+                retained_nodes.add(new_id)
                 if old_id is not None:
                     old_to_new[old_id] = new_id
+            if retained_nodes:
+                placeholders = ",".join("?" for _ in retained_nodes)
+                self.db.execute(f"DELETE FROM topology_nodes WHERE id NOT IN ({placeholders})", tuple(retained_nodes))
+            else:
+                self.db.execute("DELETE FROM topology_nodes")
+            retained_edges: set[int] = set()
+            graph: dict[int, set[int]] = {node_id: set() for node_id in retained_nodes}
             for edge in edges:
                 source = old_to_new.get(int(edge["source_node_id"]), int(edge["source_node_id"]))
                 target = old_to_new.get(int(edge["target_node_id"]), int(edge["target_node_id"]))
-                if source not in old_to_new.values() or target not in old_to_new.values():
-                    continue
-                self.db.execute(
-                    """
-                    INSERT INTO topology_edges(source_node_id, target_node_id, label, metadata_json)
-                    VALUES (?, ?, ?, ?)
-                    """,
-                    (source, target, edge.get("label"), dumps_json(edge.get("metadata") or {})),
-                )
+                if source not in retained_nodes or target not in retained_nodes or source == target:
+                    raise HTTPException(status_code=422, detail="Krawędź wskazuje nieistniejący węzeł")
+                graph[source].add(target)
+                existing_edge = self.db.fetchone("SELECT id FROM topology_edges WHERE id=?", (edge.get("id"),))
+                if existing_edge:
+                    edge_id = int(existing_edge["id"])
+                    self.db.execute(
+                        """UPDATE topology_edges SET source_node_id=?,target_node_id=?,label=?,metadata_json=?,
+                           updated_at=datetime('now') WHERE id=?""",
+                        (source, target, edge.get("label"), dumps_json(edge.get("metadata") or {}), edge_id),
+                    )
+                else:
+                    cursor = self.db.execute(
+                        """INSERT INTO topology_edges(source_node_id,target_node_id,label,metadata_json)
+                           VALUES (?,?,?,?)""",
+                        (source, target, edge.get("label"), dumps_json(edge.get("metadata") or {})),
+                    )
+                    edge_id = int(cursor.lastrowid or 0)
+                retained_edges.add(edge_id)
+            if _has_cycle(graph):
+                raise HTTPException(status_code=422, detail="Topologia nie może zawierać cyklu zależności")
+            if retained_edges:
+                placeholders = ",".join("?" for _ in retained_edges)
+                self.db.execute(f"DELETE FROM topology_edges WHERE id NOT IN ({placeholders})", tuple(retained_edges))
+            else:
+                self.db.execute("DELETE FROM topology_edges")
+            self.db.execute("UPDATE topology_meta SET version=version+1, updated_at=datetime('now') WHERE singleton=1")
         return self.get_topology()
 
     def auto_layout_topology(self) -> dict[str, Any]:
@@ -276,11 +356,11 @@ class MonitorService:
             return topology
         layers: dict[int, list[dict[str, Any]]] = {}
         for node in nodes:
-            layer = TOPOLOGY_TYPE_ORDER.get(node.get("type") or "other", TOPOLOGY_TYPE_ORDER["other"])
-            layers.setdefault(layer, []).append(node)
-        for layer_index, layer in sorted(layers.items()):
-            count = len(layer)
-            for index, node in enumerate(layer):
+            layer_id = TOPOLOGY_TYPE_ORDER.get(node.get("type") or "other", TOPOLOGY_TYPE_ORDER["other"])
+            layers.setdefault(layer_id, []).append(node)
+        for layer_index, layer_nodes in sorted(layers.items()):
+            count = len(layer_nodes)
+            for index, node in enumerate(layer_nodes):
                 node["x"] = 90 + layer_index * 170
                 node["y"] = 80 + index * 110 + max(0, 3 - count) * 35
         return self.save_topology({"nodes": nodes, "edges": topology["edges"]})
@@ -349,7 +429,10 @@ class MonitorService:
         return [self.get_monitor(monitor_id) for monitor_id in created_ids]
 
     async def scan_discovery(self, payload: dict[str, Any]) -> list[dict[str, Any]]:
-        return await self.discovery.scan(payload, self.list_monitors(include_secrets=True))
+        return await asyncio.wait_for(
+            self.discovery.scan(payload, self.list_monitors(include_secrets=True)),
+            timeout=float(payload.get("total_timeout_seconds") or 60),
+        )
 
     async def import_discovery(self, payloads: list[dict[str, Any]]) -> list[dict[str, Any]]:
         sanitized = []
@@ -370,6 +453,8 @@ class MonitorService:
 
     async def update_monitor(self, monitor_id: int, payload: dict[str, Any]) -> dict[str, Any]:
         current = self.get_monitor(monitor_id, include_secrets=True)
+        if payload.get("name") and payload["name"] != current["name"] and hasattr(self.ha, "delete_monitor_states"):
+            await self.ha.delete_monitor_states(current)
         merged = {
             "type": payload.get("type", current["type"]),
             "name": payload.get("name", current["name"]),
@@ -396,11 +481,16 @@ class MonitorService:
                 monitor["interval_seconds"],
                 monitor["group_id"],
                 int(monitor["enabled"]),
-                dumps_json(monitor["config"]),
+                dumps_json(self.secrets.split_config(monitor_id, monitor["config"])),
                 monitor_id,
             ),
         )
-        self._last_started.pop(monitor_id, None)
+        self.db.execute(
+            """INSERT INTO scheduler_state(monitor_id,next_check_at) VALUES (?,datetime('now'))
+               ON CONFLICT(monitor_id) DO UPDATE SET next_check_at=datetime('now'),
+               last_skip_reason='configuration_changed'""",
+            (monitor_id,),
+        )
         if payload.get("test_on_save", False):
             await self.run_check(monitor_id)
         updated = self.get_monitor(monitor_id)
@@ -442,9 +532,16 @@ class MonitorService:
         }
 
     def delete_monitor(self, monitor_id: int) -> None:
-        self.get_monitor(monitor_id)
+        monitor = self.get_monitor(monitor_id)
+        if hasattr(self.ha, "delete_monitor_states"):
+            try:
+                asyncio.get_running_loop().create_task(self.ha.delete_monitor_states(monitor))
+            except RuntimeError:
+                pass
+        task = next((task for task in self._tasks if task.get_name() == f"monitor-check-{monitor_id}"), None)
+        if task:
+            task.cancel()
         self.db.execute("DELETE FROM monitors WHERE id = ?", (monitor_id,))
-        self._last_started.pop(monitor_id, None)
 
     def set_monitor_enabled(self, monitor_id: int, enabled: bool) -> dict[str, Any]:
         current = self.get_monitor(monitor_id)
@@ -453,7 +550,11 @@ class MonitorService:
             (int(enabled), monitor_id),
         )
         if not enabled:
-            self._last_started.pop(monitor_id, None)
+            self.db.execute("UPDATE scheduler_state SET last_skip_reason='disabled' WHERE monitor_id=?", (monitor_id,))
+        else:
+            self.db.execute(
+                "UPDATE scheduler_state SET next_check_at=datetime('now') WHERE monitor_id=?", (monitor_id,)
+            )
         updated = self.get_monitor(monitor_id)
         if bool(current["enabled"]) != bool(updated["enabled"]):
             self._record_local_event(
@@ -464,19 +565,73 @@ class MonitorService:
             )
         return updated
 
-    async def run_check(self, monitor_id: int) -> dict[str, Any]:
+    async def run_check(self, monitor_id: int, force: bool = False) -> dict[str, Any]:
         if monitor_id in self.running:
-            return self.get_monitor(monitor_id)
+            if not force:
+                return {**self.get_monitor(monitor_id), "check_status": "already_running"}
+            while monitor_id in self.running and not self._stop.is_set():
+                await asyncio.sleep(0.05)
+            return await self.run_check(monitor_id, force=False)
         self.running.add(monitor_id)
         self.queued_checks.add(monitor_id)
+        started = time.monotonic()
         try:
-            async with self._check_semaphore:
+            async with self._limit_condition:
+                await self._limit_condition.wait_for(
+                    lambda: self._limit_active < max(int(self.config.max_concurrent_checks), 1)
+                )
+                self._limit_active += 1
+            try:
                 self.queued_checks.discard(monitor_id)
                 self.active_checks.add(monitor_id)
                 try:
-                    return await self._run_check_now(monitor_id)
+                    monitor = self.get_monitor(monitor_id, include_secrets=True)
+                    if not monitor["enabled"]:
+                        self.db.execute(
+                            "UPDATE scheduler_state SET last_skip_reason='disabled_while_queued' WHERE monitor_id=?",
+                            (monitor_id,),
+                        )
+                        return {**sanitize_secrets(monitor), "check_status": "completed"}
+                    self.db.execute(
+                        "UPDATE scheduler_state SET last_started_at=?, last_skip_reason=NULL WHERE monitor_id=?",
+                        (utc_now(), monitor_id),
+                    )
+                    result = await self._run_check_now(monitor_id)
+                    interval = int(result["interval_seconds"])
+                    jitter = monitor_id % max(min(interval // 10, 30), 1)
+                    self.db.execute(
+                        """UPDATE scheduler_state SET last_finished_at=?, last_duration_ms=?,
+                           next_check_at=datetime('now', ?),
+                           last_scheduler_error=NULL, consecutive_scheduler_errors=0 WHERE monitor_id=?""",
+                        (
+                            utc_now(),
+                            round((time.monotonic() - started) * 1000, 2),
+                            f"+{interval + jitter} seconds",
+                            monitor_id,
+                        ),
+                    )
+                    return {**result, "check_status": "completed"}
+                except asyncio.CancelledError:
+                    self.db.execute(
+                        """UPDATE scheduler_state SET last_scheduler_error='cancelled',
+                           last_skip_reason='cancelled' WHERE monitor_id=?""",
+                        (monitor_id,),
+                    )
+                    raise
+                except Exception as exc:
+                    self.db.execute(
+                        """UPDATE scheduler_state SET last_finished_at=?, last_duration_ms=?, last_scheduler_error=?,
+                           consecutive_scheduler_errors=consecutive_scheduler_errors+1,
+                           next_check_at=datetime('now', '+15 seconds') WHERE monitor_id=?""",
+                        (utc_now(), round((time.monotonic() - started) * 1000, 2), str(exc)[:500], monitor_id),
+                    )
+                    raise
                 finally:
                     self.active_checks.discard(monitor_id)
+            finally:
+                async with self._limit_condition:
+                    self._limit_active -= 1
+                    self._limit_condition.notify_all()
         finally:
             self.queued_checks.discard(monitor_id)
             self.running.discard(monitor_id)
@@ -486,6 +641,8 @@ class MonitorService:
         previous_status = monitor["status"]
         result = await self._check(monitor)
         result = self._apply_anomaly_detection(monitor, result)
+        if result.error:
+            result.error = str(sanitize_secrets(result.error))
         final_status, failure_count, recovery_count, threshold_pending = self._status_after_thresholds(
             monitor,
             result.status,
@@ -494,26 +651,28 @@ class MonitorService:
         changed = previous_status != final_status
         content_changed = result.content_changed
         last_changed_at = now if changed or content_changed else monitor.get("last_changed_at")
-        details = sanitize_secrets({
-            **(result.details or {}),
-            "raw_status": result.status,
-            "effective_status": final_status,
-            "severity": self._monitor_severity(monitor, result.details),
-            "failure_count": failure_count,
-            "recovery_count": recovery_count,
-            "failure_threshold": self._monitor_int_setting(
-                monitor,
-                "failure_threshold",
-                self.config.failure_threshold,
-                1,
-            ),
-            "recovery_threshold": self._monitor_int_setting(
-                monitor,
-                "recovery_threshold",
-                self.config.recovery_threshold,
-                1,
-            ),
-        })
+        details = sanitize_secrets(
+            {
+                **(result.details or {}),
+                "raw_status": result.status,
+                "effective_status": final_status,
+                "severity": self._monitor_severity(monitor, result.details),
+                "failure_count": failure_count,
+                "recovery_count": recovery_count,
+                "failure_threshold": self._monitor_int_setting(
+                    monitor,
+                    "failure_threshold",
+                    self.config.failure_threshold,
+                    1,
+                ),
+                "recovery_threshold": self._monitor_int_setting(
+                    monitor,
+                    "recovery_threshold",
+                    self.config.recovery_threshold,
+                    1,
+                ),
+            }
+        )
 
         self.db.execute(
             """
@@ -544,7 +703,9 @@ class MonitorService:
                 "UPDATE monitors SET enabled = 0, updated_at = datetime('now') WHERE id = ?",
                 (monitor_id,),
             )
-            self._last_started.pop(monitor_id, None)
+            self.db.execute(
+                "UPDATE scheduler_state SET last_skip_reason='stopped_by_check' WHERE monitor_id=?", (monitor_id,)
+            )
         elif threshold_pending:
             self._schedule_retry(monitor, details)
         self.db.execute(
@@ -568,18 +729,21 @@ class MonitorService:
                 int(result.content_changed),
                 result.content_hash,
                 dumps_json(
-                    sanitize_secrets({
-                        "monitor_id": monitor_id,
-                        "monitor_type": monitor["type"],
-                        "status": final_status,
-                        "response_time_ms": result.response_ms,
-                        "checked_at": now,
-                        "error_message": result.error,
-                        **details,
-                    })
+                    sanitize_secrets(
+                        {
+                            "monitor_id": monitor_id,
+                            "monitor_type": monitor["type"],
+                            "status": final_status,
+                            "response_time_ms": result.response_ms,
+                            "checked_at": now,
+                            "error_message": result.error,
+                            **details,
+                        }
+                    )
                 ),
             ),
         )
+        self.invalidate_baseline(monitor_id)
         self._sync_incident(monitor_id, previous_status, final_status, result.status, result.error, now)
 
         should_store_snapshot = (
@@ -724,7 +888,10 @@ class MonitorService:
         baseline: dict[str, Any],
         config: dict[str, Any],
     ) -> dict[str, Any] | None:
-        mean = float(baseline["mean"])
+        strategy = str(config.get("anomaly_baseline_method") or "median")
+        if strategy not in {"mean", "median", "p95", "mad"}:
+            strategy = "median"
+        mean = float(baseline["median"] if strategy == "mad" else baseline[strategy])
         stddev = float(baseline["stddev"])
         multiplier = max(_safe_float(config.get("anomaly_stddev_multiplier"), 3), 0)
         warn_percent = max(_safe_float(config.get("anomaly_warn_percent_over_baseline"), 50), 0)
@@ -755,19 +922,31 @@ class MonitorService:
         window_hours: float,
         min_samples: int,
     ) -> dict[str, Any] | None:
+        key = (monitor_id, metric, float(window_hours), int(min_samples))
+        cached = self._baseline_cache.get(key)
+        if cached and time.monotonic() - cached[0] < 60:
+            return cached[1]
         values = self._metric_history_values(monitor_id, metric, window_hours)
         if len(values) < min_samples:
+            self._baseline_cache[key] = (time.monotonic(), None)
             return None
         sorted_values = sorted(values)
-        return {
+        median = statistics.median(sorted_values)
+        baseline = {
             "metric": metric,
             "sample_count": len(values),
             "mean": round(statistics.fmean(values), 4),
             "median": round(statistics.median(sorted_values), 4),
             "p95": round(_percentile(sorted_values, 0.95), 4),
             "stddev": round(statistics.pstdev(values), 4),
+            "mad": round(statistics.median(abs(value - median) for value in values), 4),
             "window_hours": window_hours,
         }
+        self._baseline_cache[key] = (time.monotonic(), baseline)
+        return baseline
+
+    def invalidate_baseline(self, monitor_id: int) -> None:
+        self._baseline_cache = {key: value for key, value in self._baseline_cache.items() if key[0] != monitor_id}
 
     def _metric_history_values(self, monitor_id: int, metric: str, window_hours: float) -> list[float]:
         cutoff = (datetime.now(UTC) - timedelta(hours=window_hours)).replace(microsecond=0).isoformat()
@@ -775,8 +954,9 @@ class MonitorService:
             """
             SELECT response_ms, packet_loss, details_json
             FROM monitor_checks
-            WHERE monitor_id = ? AND checked_at >= ?
+            WHERE monitor_id = ? AND checked_at >= ? AND status NOT IN ('error', 'offline', 'unknown')
             ORDER BY checked_at DESC, id DESC
+            LIMIT 500
             """,
             (monitor_id, cutoff),
         )
@@ -811,8 +991,10 @@ class MonitorService:
         retry_delay = self._monitor_int_setting(monitor, "retry_delay_seconds", self.config.retry_delay_seconds, 0)
         if retry_delay <= 0:
             return
-        interval = max(int(monitor.get("interval_seconds") or retry_delay), 1)
-        self._last_started[int(monitor["id"])] = time.monotonic() - max(interval - retry_delay, 0)
+        self.db.execute(
+            "UPDATE scheduler_state SET next_check_at=datetime('now', ?) WHERE monitor_id=?",
+            (f"+{retry_delay} seconds", int(monitor["id"])),
+        )
         details["retry_delay_seconds"] = retry_delay
 
     def _monitor_int_setting(self, monitor: dict[str, Any], key: str, default: int, minimum: int) -> int:
@@ -912,7 +1094,8 @@ class MonitorService:
     def _monitor_severity(monitor: dict[str, Any], details: dict[str, Any] | None = None) -> str:
         if details and details.get("severity"):
             return str(details["severity"])
-        config = monitor.get("config") if isinstance(monitor.get("config"), dict) else {}
+        raw_config = monitor.get("config")
+        config: dict[str, Any] = raw_config if isinstance(raw_config, dict) else {}
         return str(config.get("severity") or "warning")
 
     async def _handle_alert_routing(
@@ -936,9 +1119,7 @@ class MonitorService:
         if active:
             key = f"{final_status}:{error or details.get('error_message') or ''}"[:500]
             last_at = parse_time(state.get("last_at"))
-            minutes_since = (
-                (datetime.now(UTC) - last_at).total_seconds() / 60 if last_at else None
-            )
+            minutes_since = (datetime.now(UTC) - last_at).total_seconds() / 60 if last_at else None
             cooldown = int(config.get("cooldown_minutes") or 0)
             repeat_every = int(config.get("repeat_every_minutes") or 0)
             repeats = int(state.get("repeats") or 0)
@@ -946,7 +1127,11 @@ class MonitorService:
             duplicate = bool(config.get("deduplicate_alerts", True)) and state.get("last_key") == key
             suppressed_reason: str | None = None
             repeated = False
-            if self._is_maintenance_active(monitor):
+            root_cause = self._root_cause_for_monitor(int(monitor["id"]))
+            if root_cause:
+                suppressed_reason = "parent_failure"
+                event_details["root_cause"] = root_cause
+            elif self._is_maintenance_active(monitor):
                 suppressed_reason = "maintenance"
             elif duplicate and cooldown and minutes_since is not None and minutes_since < cooldown:
                 suppressed_reason = "cooldown"
@@ -999,11 +1184,40 @@ class MonitorService:
                 )
             state = {"active": False, "last_recovered_at": now}
 
-        config["_alert_state"] = state
         self.db.execute(
-            "UPDATE monitors SET config_json = ?, updated_at = datetime('now') WHERE id = ?",
-            (dumps_json(config), monitor["id"]),
+            """UPDATE monitor_runtime SET alert_state_json=?, last_alert_at=?, alert_repeat_count=?,
+               updated_at=datetime('now') WHERE monitor_id=?""",
+            (dumps_json(state), state.get("last_at"), int(state.get("repeats") or 0), monitor["id"]),
         )
+
+    def _root_cause_for_monitor(self, monitor_id: int) -> dict[str, Any] | None:
+        rows = self.db.fetchall(
+            """WITH RECURSIVE ancestors(id) AS (
+                 SELECT e.source_node_id FROM topology_edges e
+                 JOIN topology_nodes child ON child.id=e.target_node_id WHERE child.monitor_id=?
+                 UNION
+                 SELECT e.source_node_id FROM topology_edges e JOIN ancestors a ON e.target_node_id=a.id
+               )
+               SELECT m.id,m.name,m.status FROM ancestors a JOIN topology_nodes n ON n.id=a.id
+               JOIN monitors m ON m.id=n.monitor_id""",
+            (monitor_id,),
+        )
+        failed = next((row for row in rows if self._is_incident_status(str(row["status"]))), None)
+        if not failed:
+            return None
+        affected = self.db.fetchone(
+            """WITH RECURSIVE descendants(id) AS (
+                 SELECT id FROM topology_nodes WHERE monitor_id=?
+                 UNION SELECT e.target_node_id FROM topology_edges e JOIN descendants d ON e.source_node_id=d.id
+               ) SELECT COUNT(DISTINCT monitor_id) AS count FROM topology_nodes
+                 WHERE id IN (SELECT id FROM descendants) AND monitor_id IS NOT NULL""",
+            (failed["id"],),
+        )
+        return {
+            "monitor_id": failed["id"],
+            "monitor_name": failed["name"],
+            "affected_count": affected["count"] if affected else 1,
+        }
 
     async def _deliver_alert_channels(
         self,
@@ -1016,19 +1230,76 @@ class MonitorService:
         title = f"Monitoring Center: {monitor['name']}"
         message = f"{monitor['name']} changed to {final_status} ({details.get('severity', 'warning')})"
         if "persistent_notification" in channels or "home_assistant_persistent_notification" in channels:
-            await self.ha.create_persistent_notification(title, message)
+            await self._deliver_channel(
+                monitor,
+                "persistent_notification",
+                {"title": title, "message": message},
+                lambda: self.ha.create_persistent_notification(title, message),
+            )
         if "webhook" in channels and config.get("webhook_url"):
-            await self.ha.post_webhook(
-                str(config["webhook_url"]),
-                sanitize_secrets(
-                    {
-                        "monitor_id": monitor["id"],
-                        "monitor_name": monitor["name"],
-                        "monitor_type": monitor["type"],
-                        "target": monitor["target"],
-                        "new_state": final_status,
-                        "details": details,
-                    }
+            payload = sanitize_secrets(
+                {
+                    "monitor_id": monitor["id"],
+                    "monitor_name": monitor["name"],
+                    "monitor_type": monitor["type"],
+                    "target": monitor["target"],
+                    "new_state": final_status,
+                    "details": details,
+                }
+            )
+            await self._deliver_channel(
+                monitor, "webhook", payload, lambda: self.ha.post_webhook(str(config["webhook_url"]), payload)
+            )
+
+    async def _deliver_channel(
+        self, monitor: dict[str, Any], channel: str, payload: dict[str, Any], sender: Any
+    ) -> None:
+        cursor = self.db.execute(
+            """INSERT INTO alert_deliveries(monitor_id,channel,payload_json,result,next_attempt_at)
+               VALUES (?,?,?,'pending',datetime('now'))""",
+            (monitor["id"], channel, dumps_json(sanitize_secrets(payload))),
+        )
+        delivery_id = int(cursor.lastrowid or 0)
+        try:
+            delivered = bool(await sender())
+            error = None if delivered else "Kanał odrzucił dostawę"
+        except Exception as exc:
+            delivered = False
+            error = str(exc)[:500]
+        self.db.execute(
+            """UPDATE alert_deliveries SET attempted_at=datetime('now'), result=?, error=?, attempt_count=1,
+               next_attempt_at=datetime('now','+30 seconds') WHERE id=?""",
+            ("delivered" if delivered else "retry", error, delivery_id),
+        )
+
+    async def _process_alert_retries(self) -> None:
+        rows = self.db.fetchall(
+            """SELECT * FROM alert_deliveries WHERE result='retry' AND attempt_count < 5
+               AND next_attempt_at <= datetime('now') ORDER BY next_attempt_at,id LIMIT 20"""
+        )
+        for row in rows:
+            payload = loads_json(row["payload_json"], {})
+            monitor = self.get_monitor(int(row["monitor_id"]), include_secrets=True)
+            config = monitor.get("config") or {}
+            if row["channel"] == "webhook" and config.get("webhook_url"):
+                delivered = await self.ha.post_webhook(str(config["webhook_url"]), payload)
+            elif row["channel"] == "persistent_notification":
+                delivered = await self.ha.create_persistent_notification(
+                    str(payload.get("title") or "Monitoring Center"), str(payload.get("message") or "Alert")
+                )
+            else:
+                delivered = False
+            attempts = int(row["attempt_count"]) + 1
+            delay = min(3600, 30 * (2 ** (attempts - 1)))
+            self.db.execute(
+                """UPDATE alert_deliveries SET attempted_at=datetime('now'),result=?,attempt_count=?,
+                   next_attempt_at=datetime('now',?),error=? WHERE id=?""",
+                (
+                    "delivered" if delivered else "retry",
+                    attempts,
+                    f"+{delay} seconds",
+                    None if delivered else "Kanał odrzucił dostawę",
+                    row["id"],
                 ),
             )
 
@@ -1112,9 +1383,20 @@ class MonitorService:
         return max(0, int((ended - started).total_seconds()))
 
     async def cleanup_history(self) -> None:
-        retention = int(self.get_settings().get("retention_days", self.config.retention_days))
-        cutoff = (datetime.now(UTC) - timedelta(days=retention)).replace(microsecond=0).isoformat()
-        self.db.execute("DELETE FROM monitor_checks WHERE checked_at < ?", (cutoff,))
+        settings = self.get_settings()
+        default = int(settings.get("retention_days", self.config.retention_days))
+        policies = (
+            ("monitor_checks", "checked_at", "retention_checks_days"),
+            ("events", "created_at", "retention_events_days"),
+            ("incidents", "ended_at", "retention_incidents_days"),
+            ("website_snapshots", "created_at", "retention_snapshots_days"),
+        )
+        for table, column, key in policies:
+            retention = int(settings.get(key) or default)
+            cutoff = (datetime.now(UTC) - timedelta(days=retention)).replace(microsecond=0).isoformat()
+            self.db.execute(f"DELETE FROM {table} WHERE {column} IS NOT NULL AND {column} < ?", (cutoff,))
+        self.db.checkpoint()
+        self.db.optimize()
         self.db.execute("DELETE FROM events WHERE created_at < ?", (cutoff,))
         self.db.execute("DELETE FROM website_snapshots WHERE created_at < ?", (cutoff,))
 
@@ -1234,6 +1516,59 @@ class MonitorService:
             row["payload"] = loads_json(row.pop("payload_json", None), {})
         return rows
 
+    def get_cursor_page(self, resource: str, limit: int, cursor: str | None = None, **filters: Any) -> dict[str, Any]:
+        definitions = {
+            "history": ("monitor_checks", "monitor_id"),
+            "events": ("events", "monitor_id"),
+            "incidents": ("incidents", "monitor_id"),
+            "monitors": ("monitors", None),
+            "snapshots": ("website_snapshots", "monitor_id"),
+        }
+        if resource not in definitions:
+            raise ValueError(resource)
+        table, monitor_column = definitions[resource]
+        clauses: list[str] = []
+        params: list[Any] = []
+        if cursor:
+            try:
+                clauses.append("id < ?")
+                params.append(int(cursor))
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail="Nieprawidłowy kursor") from exc
+        monitor_id = filters.get("monitor_id")
+        if monitor_id is not None and monitor_column:
+            clauses.append(f"{monitor_column} = ?")
+            params.append(int(monitor_id))
+        if resource == "history" and filters.get("status"):
+            clauses.append("status = ?")
+            params.append(str(filters["status"]))
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        total_clauses = [clause for clause in clauses if clause != "id < ?"]
+        total_params = params[1:] if cursor else params
+        total_where = f"WHERE {' AND '.join(total_clauses)}" if total_clauses else ""
+        bounded = min(max(int(limit), 1), 500)
+        rows = self.db.fetchall(f"SELECT * FROM {table} {where} ORDER BY id DESC LIMIT ?", (*params, bounded + 1))
+        has_more = len(rows) > bounded
+        rows = rows[:bounded]
+        if resource == "monitors":
+            rows = [self._hydrate_monitor(row) for row in rows]
+        elif resource == "events":
+            for row in rows:
+                row["payload"] = loads_json(row.pop("payload_json", None), {})
+        elif resource == "history":
+            for row in rows:
+                row["details"] = loads_json(row.pop("details_json", None), {})
+        total_row = self.db.fetchone(f"SELECT COUNT(*) AS count FROM {table} {total_where}", total_params)
+        return {
+            "items": rows,
+            "pagination": {
+                "limit": bounded,
+                "next_cursor": str(rows[-1]["id"]) if has_more and rows else None,
+                "has_more": has_more,
+                "total": int(total_row["count"] if total_row else 0),
+            },
+        }
+
     def list_incidents(
         self,
         limit: int = 100,
@@ -1263,6 +1598,35 @@ class MonitorService:
             if row["status"] == "open" and not row.get("ended_at"):
                 row["duration_seconds"] = self._incident_duration_seconds(row["started_at"])
         return rows
+
+    def update_incident(self, incident_id: int, action: str, comment: str | None = None) -> dict[str, Any]:
+        incident = self.db.fetchone("SELECT * FROM incidents WHERE id=?", (incident_id,))
+        if not incident:
+            raise HTTPException(status_code=404, detail="Incydent nie istnieje")
+        if action == "acknowledged":
+            self.db.execute(
+                "UPDATE incidents SET acknowledged_at=datetime('now'),operator_comment=? WHERE id=?",
+                (comment, incident_id),
+            )
+        elif action == "closed":
+            self.db.execute(
+                """UPDATE incidents SET status='closed',ended_at=COALESCE(ended_at,datetime('now')),
+                   operator_comment=? WHERE id=?""",
+                (comment, incident_id),
+            )
+        else:
+            raise ValueError(action)
+        self.db.execute(
+            "INSERT INTO incident_history(incident_id,action,comment) VALUES (?,?,?)",
+            (incident_id, action, comment),
+        )
+        updated = self.db.fetchone("SELECT * FROM incidents WHERE id=?", (incident_id,))
+        assert updated is not None
+        updated["history"] = self.db.fetchall(
+            "SELECT action,comment,created_at FROM incident_history WHERE incident_id=? ORDER BY id DESC",
+            (incident_id,),
+        )
+        return updated
 
     def get_monitor_timeline(self, monitor_id: int, limit: int = 120) -> list[dict[str, Any]]:
         monitor = self.get_monitor(monitor_id)
@@ -1399,7 +1763,8 @@ class MonitorService:
 
     @staticmethod
     def _timeline_description(event: dict[str, Any], payload: dict[str, Any]) -> str:
-        details = payload.get("details") if isinstance(payload.get("details"), dict) else {}
+        raw_details = payload.get("details")
+        details: dict[str, Any] = raw_details if isinstance(raw_details, dict) else {}
         return (
             details.get("error_message")
             or details.get("change_summary")
@@ -1419,9 +1784,15 @@ class MonitorService:
             "retry_delay_seconds": self.config.retry_delay_seconds,
             "max_page_size_mb": self.config.max_page_size_mb,
             "block_private_networks": self.config.block_private_networks,
+            "allow_private_monitor_targets": self.config.allow_private_monitor_targets,
+            "allow_private_webhooks": self.config.allow_private_webhooks,
             "publish_home_assistant_entities": self.config.publish_home_assistant_entities,
             "publish_home_assistant_events": self.config.publish_home_assistant_events,
             "entity_prefix": self.config.entity_prefix,
+            "retention_checks_days": self.config.retention_days,
+            "retention_events_days": self.config.retention_days,
+            "retention_incidents_days": self.config.retention_days,
+            "retention_snapshots_days": self.config.retention_days,
         }
         persisted_keys: set[str] = set()
         for row in self.db.fetchall("SELECT key, value FROM settings"):
@@ -1454,7 +1825,6 @@ class MonitorService:
             )
             if hasattr(self.config, key):
                 setattr(self.config, key, value)
-        self._check_semaphore = asyncio.Semaphore(max(int(self.config.max_concurrent_checks), 1))
         return self.get_settings()
 
     def set_monitor_maintenance(self, monitor_id: int, payload: dict[str, Any]) -> dict[str, Any]:
@@ -1549,36 +1919,30 @@ class MonitorService:
         return normalized
 
     def _persist_runtime_details(self, monitor: dict[str, Any], details: dict[str, Any]) -> None:
-        config = dict(monitor.get("config") or {})
-        changed = False
+        runtime: dict[str, Any] = {}
         if "records" in details:
-            config["last_dns_result"] = details["records"]
-            changed = True
+            runtime["last_dns_result_json"] = dumps_json(details["records"])
         if "state" in details:
-            config["last_ha_state"] = details["state"]
-            changed = True
-        if "last_hash" in details:
-            config["last_hash"] = details["last_hash"]
-            changed = True
-        if "last_output_hash" in details:
-            config["last_output_hash"] = details["last_output_hash"]
-            changed = True
+            runtime["last_ha_state"] = details["state"]
+        if "last_hash" in details or "last_output_hash" in details:
+            runtime["last_output_hash"] = details.get("last_output_hash") or details.get("last_hash")
         if "anomaly_reason" in details:
-            config["last_anomaly"] = {
-                "metric": details.get("anomaly_metric"),
-                "baseline": details.get("baseline"),
-                "current_value": details.get("current_value"),
-                "anomaly_score": details.get("anomaly_score"),
-                "anomaly_reason": details.get("anomaly_reason"),
-            }
-            changed = True
+            runtime["last_anomaly_json"] = dumps_json(
+                {
+                    "metric": details.get("anomaly_metric"),
+                    "baseline": details.get("baseline"),
+                    "current_value": details.get("current_value"),
+                    "anomaly_score": details.get("anomaly_score"),
+                    "anomaly_reason": details.get("anomaly_reason"),
+                }
+            )
         if "_alert_state" in details:
-            config["_alert_state"] = details["_alert_state"]
-            changed = True
-        if changed:
+            runtime["alert_state_json"] = dumps_json(details["_alert_state"])
+        if runtime:
+            columns = ", ".join(f"{key}=?" for key in runtime)
             self.db.execute(
-                "UPDATE monitors SET config_json = ?, updated_at = datetime('now') WHERE id = ?",
-                (dumps_json(config), monitor["id"]),
+                f"UPDATE monitor_runtime SET {columns}, updated_at=datetime('now') WHERE monitor_id=?",
+                (*runtime.values(), monitor["id"]),
             )
 
     def _change_count(self, monitor_id: int) -> int:
@@ -1634,6 +1998,22 @@ class MonitorService:
             "slo": self.get_slo_stats(),
         }
 
+    def get_bootstrap(self) -> dict[str, Any]:
+        monitors = self.list_monitors()
+        summary = self.get_summary()
+        summary["monitors"] = monitors
+        return {
+            "summary": summary,
+            "monitors": monitors,
+            "groups": self.list_groups(),
+            "settings": self.get_settings(),
+            "monitor_types": self.get_monitor_types(),
+            "presets": self.get_presets(),
+            "incidents": self.list_incidents(limit=100),
+            "topology": self.get_topology(),
+            "generated_at": utc_now(),
+        }
+
     async def full_diagnostics(self) -> dict[str, Any]:
         data = self.diagnostics()
         data.update(
@@ -1651,9 +2031,32 @@ class MonitorService:
         return data
 
     async def run_self_check(self) -> dict[str, Any]:
+        loop = asyncio.get_running_loop()
+        started = loop.time()
+        await asyncio.sleep(0)
+        lag_ms = (loop.time() - started) * 1000
+        pending_alerts = self.db.fetchone(
+            "SELECT COUNT(*) AS count FROM alert_deliveries WHERE result IN ('pending','retry')"
+        )
         checks = [
             self._self_check_sqlite(),
             self._self_check_data_path(),
+            {
+                "name": "scheduler",
+                "ok": not self._stop.is_set(),
+                "queued": len(self.queued_checks),
+                "active": len(self.active_checks),
+            },
+            {
+                "name": "secret_storage",
+                "ok": self.secrets.key_path.exists() and (self.secrets.key_path.stat().st_mode & 0o077) == 0,
+            },
+            {
+                "name": "alert_deliveries",
+                "ok": True,
+                "pending": int(pending_alerts["count"] if pending_alerts else 0),
+            },
+            {"name": "event_loop_lag", "ok": lag_ms < 1000, "lag_ms": round(lag_ms, 3)},
             await self._self_check_ha_api(),
         ]
         if self.config.publish_home_assistant_events:
@@ -1684,7 +2087,12 @@ class MonitorService:
             self.db.execute("DELETE FROM diagnostics_self_check")
             self.db.execute("INSERT INTO diagnostics_self_check(value) VALUES (?)", (value,))
             row = self.db.fetchone("SELECT value FROM diagnostics_self_check LIMIT 1")
-            return {"name": "sqlite_read_write", "ok": bool(row and row["value"] == value)}
+            integrity = self.db.fetchone("PRAGMA integrity_check")
+            return {
+                "name": "sqlite_read_write",
+                "ok": bool(row and row["value"] == value and integrity and next(iter(integrity.values())) == "ok"),
+                "integrity": next(iter(integrity.values())) if integrity else "unknown",
+            }
         except Exception as exc:
             return {"name": "sqlite_read_write", "ok": False, "error": str(exc)}
 
@@ -1723,18 +2131,17 @@ class MonitorService:
         return {"name": "home_assistant_entity_publish", "ok": bool(delivered), "enabled": True, "entity_id": entity_id}
 
     def _process_usage(self) -> dict[str, Any]:
+        started = parse_time(self.started_at)
         usage: dict[str, Any] = {
             "pid": os.getpid(),
             "platform": platform.platform(),
             "python_version": sys.version.split()[0],
-            "uptime_seconds": max(0, int((datetime.now(UTC) - parse_time(self.started_at)).total_seconds()))
-            if parse_time(self.started_at)
-            else None,
+            "uptime_seconds": max(0, int((datetime.now(UTC) - started).total_seconds())) if started else None,
         }
         try:
             import resource
 
-            usage["max_rss_kb"] = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+            usage["max_rss_kb"] = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss  # type: ignore[attr-defined]
         except Exception:
             usage["max_rss_kb"] = None
         try:
@@ -1829,14 +2236,34 @@ class MonitorService:
                 monitor["interval_seconds"],
                 monitor["group_id"],
                 int(monitor["enabled"]),
-                dumps_json(monitor["config"]),
+                "{}",
             ),
         )
-        return int(cursor.lastrowid)
+        monitor_id = int(cursor.lastrowid or 0)
+        clean = self.secrets.split_config(monitor_id, monitor["config"])
+        self.db.execute("UPDATE monitors SET config_json=? WHERE id=?", (dumps_json(clean), monitor_id))
+        self.db.execute(
+            "INSERT INTO monitor_runtime(monitor_id) VALUES (?) ON CONFLICT(monitor_id) DO NOTHING", (monitor_id,)
+        )
+        jitter = monitor_id % 30
+        self.db.execute(
+            "INSERT INTO scheduler_state(monitor_id,next_check_at) VALUES (?,datetime('now', ?))",
+            (monitor_id, f"+{jitter} seconds"),
+        )
+        return monitor_id
 
     @staticmethod
     def _normalize_monitor_config(config: dict[str, Any]) -> dict[str, Any]:
         normalized = dict(config)
+        for runtime_key in (
+            "_alert_state",
+            "last_dns_result",
+            "last_ha_state",
+            "last_hash",
+            "last_output_hash",
+            "last_anomaly",
+        ):
+            normalized.pop(runtime_key, None)
         if "timeout_minutes" not in normalized and "timeout_seconds" in normalized:
             try:
                 normalized["timeout_minutes"] = _safe_float(normalized.pop("timeout_seconds"), 300) / 60
@@ -1899,15 +2326,25 @@ class MonitorService:
                     detail=f"Monitor URL already exists: {existing['name']}",
                 )
 
-    @staticmethod
-    def _hydrate_monitor(row: dict[str, Any], mask_secrets: bool = True) -> dict[str, Any]:
+    def _hydrate_monitor(self, row: dict[str, Any], mask_secrets: bool = True) -> dict[str, Any]:
         row["enabled"] = bool(row["enabled"])
         row["failure_count"] = int(row.get("failure_count") or 0)
         row["recovery_count"] = int(row.get("recovery_count") or 0)
         row["type"] = resolve_type(row["type"])
-        row["config"] = loads_json(row.pop("config_json", None), {})
+        row["config"] = self.secrets.hydrate(int(row["id"]), loads_json(row.pop("config_json", None), {}))
         if mask_secrets:
             row["config"] = sanitize_secrets(row["config"])
+        else:
+            runtime = self.db.fetchone("SELECT * FROM monitor_runtime WHERE monitor_id=?", (row["id"],)) or {}
+            if runtime.get("last_dns_result_json"):
+                row["config"]["last_dns_result"] = loads_json(runtime["last_dns_result_json"], [])
+            if runtime.get("last_ha_state") is not None:
+                row["config"]["last_ha_state"] = runtime["last_ha_state"]
+            if runtime.get("last_output_hash"):
+                row["config"]["last_output_hash"] = runtime["last_output_hash"]
+                row["config"]["last_hash"] = runtime["last_output_hash"]
+            if runtime.get("alert_state_json"):
+                row["config"]["_alert_state"] = loads_json(runtime["alert_state_json"], {})
         row["maintenance_active"] = _is_future(row.get("maintenance_until")) or _is_future(
             row.get("group_maintenance_until")
         )
@@ -1991,14 +2428,14 @@ def _is_future(value: str | None) -> bool:
 
 def _safe_float(value: object, default: float) -> float:
     try:
-        return float(value)
+        return float(str(value))
     except (TypeError, ValueError):
         return default
 
 
 def _safe_int(value: object, default: int, minimum: int = 1) -> int:
     try:
-        number = int(value)
+        number = int(str(value))
     except (TypeError, ValueError):
         number = default
     return max(number, minimum)
@@ -2008,7 +2445,7 @@ def _optional_float(value: object) -> float | None:
     if value in (None, ""):
         return None
     try:
-        return float(value)
+        return float(str(value))
     except (TypeError, ValueError):
         return None
 

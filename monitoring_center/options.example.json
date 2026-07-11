@@ -11,6 +11,9 @@
   "retry_delay_seconds": 10,
   "max_page_size_mb": 5,
   "block_private_networks": false,
+  "allow_private_monitor_targets": true,
+  "allow_private_webhooks": false,
+  "allowed_network_cidrs": ["192.168.1.0/24"],
   "publish_home_assistant_entities": true,
   "publish_home_assistant_events": true,
   "entity_prefix": "monitoring_center"

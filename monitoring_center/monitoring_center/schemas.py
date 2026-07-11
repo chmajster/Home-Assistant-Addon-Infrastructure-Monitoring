@@ -39,6 +39,7 @@ class DiscoveryScanIn(BaseModel):
     network_cidr: str | None = Field(default=None, max_length=64)
     timeout_seconds: float = Field(default=3, gt=0, le=30)
     max_hosts: int = Field(default=64, ge=1, le=1024)
+    total_timeout_seconds: float = Field(default=60, gt=0, le=300)
 
     def normalized_sources(self) -> list[str]:
         return [source for source in dict.fromkeys(self.sources) if source in DISCOVERY_SOURCES]
@@ -72,6 +73,10 @@ class MaintenanceIn(BaseModel):
     reason: str | None = Field(default=None, max_length=500)
 
 
+class IncidentActionIn(BaseModel):
+    comment: str | None = Field(default=None, max_length=1000)
+
+
 class SettingsIn(BaseModel):
     retention_days: int = Field(ge=1, le=3650)
     default_interval_seconds: int = Field(ge=5, le=86400)
@@ -82,9 +87,15 @@ class SettingsIn(BaseModel):
     retry_delay_seconds: int = Field(ge=0, le=3600)
     max_page_size_mb: float = Field(gt=0)
     block_private_networks: bool
+    allow_private_monitor_targets: bool = True
+    allow_private_webhooks: bool = False
     publish_home_assistant_entities: bool
     publish_home_assistant_events: bool
     entity_prefix: str = Field(min_length=1, max_length=64)
+    retention_checks_days: int | None = Field(default=None, ge=1, le=3650)
+    retention_events_days: int | None = Field(default=None, ge=1, le=3650)
+    retention_incidents_days: int | None = Field(default=None, ge=1, le=3650)
+    retention_snapshots_days: int | None = Field(default=None, ge=1, le=3650)
 
 
 class TopologyNodeIn(BaseModel):
@@ -110,5 +121,18 @@ class TopologyEdgeIn(BaseModel):
 
 
 class TopologyIn(BaseModel):
+    version: int | None = Field(default=None, ge=1)
     nodes: list[TopologyNodeIn] = Field(default_factory=list, max_length=500)
     edges: list[TopologyEdgeIn] = Field(default_factory=list, max_length=1000)
+
+
+class Pagination(BaseModel):
+    limit: int
+    next_cursor: str | None = None
+    has_more: bool
+    total: int
+
+
+class Page(BaseModel):
+    items: list[dict[str, Any]]
+    pagination: Pagination
