@@ -6,6 +6,7 @@ import logging
 import math
 import os
 import platform
+import sqlite3
 import statistics
 import sys
 import time
@@ -19,9 +20,9 @@ from .config import AppConfig
 from .database import Database, dumps_json, loads_json
 from .discovery import DiscoveryService
 from .ha import HomeAssistantClient
-from .monitor_types import PRESETS, get_plugin, list_types, resolve_type
+from .monitor_types import PRESETS, credential_kinds_for_type, get_plugin, list_types, resolve_type
 from .monitor_types.base import CheckResult, MonitorContext, is_success_status
-from .secret_store import SecretStore
+from .secret_store import SecretStore, SecretStoreError
 from .security import preserve_existing_secrets, sanitize_secrets
 from .validators import normalize_url_key
 
@@ -45,6 +46,9 @@ TOPOLOGY_TYPE_ORDER = {
     "iot": 5,
     "other": 5,
 }
+CREDENTIAL_KINDS = {"username_password", "ssh_private_key"}
+CREDENTIAL_SECRET_FIELDS = {"password", "private_key", "private_key_passphrase"}
+CREDENTIAL_AUTH_FIELDS = {"username", "password", "private_key", "private_key_passphrase", "auth_method"}
 
 
 def utc_now() -> str:
@@ -250,6 +254,188 @@ class MonitorService:
     def get_presets(self) -> list[dict[str, Any]]:
         return PRESETS
 
+    def list_credentials(self) -> list[dict[str, Any]]:
+        rows = self.db.fetchall(
+            """
+            SELECT c.*,
+                   EXISTS(SELECT 1 FROM credential_secrets s
+                          WHERE s.credential_id=c.id AND s.field='password') AS has_password,
+                   EXISTS(SELECT 1 FROM credential_secrets s
+                          WHERE s.credential_id=c.id AND s.field='private_key') AS has_private_key,
+                   EXISTS(SELECT 1 FROM credential_secrets s
+                          WHERE s.credential_id=c.id AND s.field='private_key_passphrase')
+                          AS has_private_key_passphrase,
+                   (SELECT COUNT(*) FROM monitors m WHERE m.credential_id=c.id) AS in_use_count
+            FROM credential_profiles c
+            ORDER BY c.name COLLATE NOCASE
+            """
+        )
+        return [self._credential_metadata(row) for row in rows]
+
+    def get_credential(self, credential_id: int) -> dict[str, Any]:
+        credential = next((item for item in self.list_credentials() if item["id"] == credential_id), None)
+        if not credential:
+            raise KeyError(credential_id)
+        return credential
+
+    def create_credential(self, payload: dict[str, Any]) -> dict[str, Any]:
+        kind = self._validate_credential_kind(payload.get("kind"))
+        name = str(payload["name"]).strip()
+        if not name:
+            raise HTTPException(status_code=422, detail="Nazwa profilu nie może być pusta")
+        allowed_fields = {"password"} if kind == "username_password" else {"private_key", "private_key_passphrase"}
+        secret_values = {field: payload.get(field) for field in allowed_fields}
+        required = "password" if kind == "username_password" else "private_key"
+        if secret_values.get(required) in (None, "", "********"):
+            raise HTTPException(status_code=422, detail=f"Profil wymaga pola {required}")
+        try:
+            with self.db.transaction():
+                cursor = self.db.execute(
+                    """INSERT INTO credential_profiles(name, kind, username, description)
+                       VALUES (?, ?, ?, ?)""",
+                    (
+                        name,
+                        kind,
+                        str(payload.get("username") or "").strip() or None,
+                        str(payload.get("description") or "").strip() or None,
+                    ),
+                )
+                credential_id = int(cursor.lastrowid or 0)
+                self.secrets.update_credential_secrets(credential_id, secret_values)
+        except sqlite3.IntegrityError as exc:
+            raise HTTPException(status_code=409, detail="Profil danych dostępowych o tej nazwie już istnieje") from exc
+        return self.get_credential(credential_id)
+
+    def update_credential(self, credential_id: int, payload: dict[str, Any]) -> dict[str, Any]:
+        current = self.get_credential(credential_id)
+        kind = self._validate_credential_kind(payload.get("kind", current["kind"]))
+        name = str(payload.get("name", current["name"])).strip()
+        if not name:
+            raise HTTPException(status_code=422, detail="Nazwa profilu nie może być pusta")
+        clear_fields = set(payload.get("clear_secret_fields") or [])
+        invalid_clear = clear_fields - CREDENTIAL_SECRET_FIELDS
+        if invalid_clear:
+            raise HTTPException(status_code=422, detail=f"Nieznane pola sekretów: {', '.join(sorted(invalid_clear))}")
+        allowed_fields = {"password"} if kind == "username_password" else {"private_key", "private_key_passphrase"}
+        clear_fields |= CREDENTIAL_SECRET_FIELDS - allowed_fields
+        secret_values = {field: payload.get(field) for field in allowed_fields if field in payload}
+        try:
+            with self.db.transaction():
+                self.db.execute(
+                    """UPDATE credential_profiles SET name=?, kind=?, username=?, description=?,
+                       updated_at=datetime('now') WHERE id=?""",
+                    (
+                        name,
+                        kind,
+                        str(payload.get("username", current.get("username")) or "").strip() or None,
+                        str(payload.get("description", current.get("description")) or "").strip() or None,
+                        credential_id,
+                    ),
+                )
+                self.secrets.update_credential_secrets(credential_id, secret_values, clear_fields)
+        except sqlite3.IntegrityError as exc:
+            raise HTTPException(status_code=409, detail="Profil danych dostępowych o tej nazwie już istnieje") from exc
+        return self.get_credential(credential_id)
+
+    def delete_credential(self, credential_id: int) -> None:
+        credential = self.get_credential(credential_id)
+        if credential["in_use_count"]:
+            count = credential["in_use_count"]
+            raise HTTPException(
+                status_code=409,
+                detail=f"Profil jest używany przez {count} monitorów i nie może zostać usunięty",
+            )
+        self.db.execute("DELETE FROM credential_profiles WHERE id=?", (credential_id,))
+
+    @staticmethod
+    def _credential_metadata(row: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "id": int(row["id"]),
+            "name": row["name"],
+            "kind": row["kind"],
+            "username": row.get("username"),
+            "description": row.get("description"),
+            "has_password": bool(row.get("has_password")),
+            "has_private_key": bool(row.get("has_private_key")),
+            "has_private_key_passphrase": bool(row.get("has_private_key_passphrase")),
+            "in_use_count": int(row.get("in_use_count") or 0),
+            "created_at": row.get("created_at"),
+            "updated_at": row.get("updated_at"),
+        }
+
+    @staticmethod
+    def _validate_credential_kind(kind: Any) -> str:
+        normalized = str(kind or "").strip()
+        if normalized not in CREDENTIAL_KINDS:
+            raise HTTPException(status_code=422, detail="Nieobsługiwany rodzaj profilu danych dostępowych")
+        return normalized
+
+    def _credential_for_monitor(self, credential_id: int, monitor_type: str) -> dict[str, Any]:
+        try:
+            credential = self.get_credential(credential_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=422, detail="Wybrany profil danych dostępowych nie istnieje") from exc
+        allowed = credential_kinds_for_type(monitor_type)
+        if credential["kind"] not in allowed:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Profil {credential['kind']} nie jest kompatybilny z monitorem {monitor_type}",
+            )
+        return credential
+
+    def _credential_reference(self, credential_id: Any) -> dict[str, Any] | None:
+        if credential_id is None:
+            return None
+        try:
+            credential = self.get_credential(int(credential_id))
+        except KeyError:
+            return None
+        return {
+            "id": credential["id"],
+            "name": credential["name"],
+            "kind": credential["kind"],
+            "username": credential.get("username"),
+        }
+
+    def _monitor_with_effective_credentials(self, monitor: dict[str, Any]) -> dict[str, Any]:
+        credential_id = monitor.get("credential_id")
+        if credential_id is None:
+            return monitor
+        credential = self._credential_for_monitor(int(credential_id), monitor["type"])
+        try:
+            secrets = self.secrets.credential_secrets(int(credential_id))
+        except SecretStoreError as exc:
+            raise HTTPException(status_code=422, detail="Nie można odszyfrować profilu danych dostępowych") from exc
+        config = dict(monitor.get("config") or {})
+        if credential["kind"] == "username_password":
+            if not secrets.get("password"):
+                raise HTTPException(status_code=422, detail="Wybrany profil nie zawiera hasła")
+            config.update(
+                {
+                    "username": credential.get("username") or "",
+                    "password": secrets["password"],
+                    "auth_method": "password",
+                }
+            )
+            config.pop("private_key", None)
+            config.pop("private_key_passphrase", None)
+        else:
+            if not secrets.get("private_key"):
+                raise HTTPException(status_code=422, detail="Wybrany profil SSH nie zawiera klucza prywatnego")
+            config.update(
+                {
+                    "username": credential.get("username") or "",
+                    "private_key": secrets["private_key"],
+                    "auth_method": "private_key",
+                }
+            )
+            config.pop("password", None)
+            if secrets.get("private_key_passphrase"):
+                config["private_key_passphrase"] = secrets["private_key_passphrase"]
+            else:
+                config.pop("private_key_passphrase", None)
+        return {**monitor, "config": config}
+
     def get_topology(self) -> dict[str, Any]:
         monitors = {int(monitor["id"]): monitor for monitor in self.list_monitors()}
         nodes = [
@@ -423,16 +609,18 @@ class MonitorService:
         created_ids: list[int] = []
         with self.db.transaction():
             for payload in payloads:
+                credential_id = payload.get("credential_id")
+                if credential_id is not None and not self.db.fetchone(
+                    "SELECT id FROM credential_profiles WHERE id=?", (credential_id,)
+                ):
+                    payload = {**payload, "credential_id": None}
                 monitor = self._normalize_payload({**payload, "test_on_save": False})
                 self._ensure_unique_url_monitor(monitor)
                 created_ids.append(self._insert_monitor(monitor))
         return [self.get_monitor(monitor_id) for monitor_id in created_ids]
 
-    async def scan_discovery(self, payload: dict[str, Any]) -> list[dict[str, Any]]:
-        return await asyncio.wait_for(
-            self.discovery.scan(payload, self.list_monitors(include_secrets=True)),
-            timeout=float(payload.get("total_timeout_seconds") or 60),
-        )
+    async def scan_discovery(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return await self.discovery.scan(payload, self.list_monitors(include_secrets=True))
 
     async def import_discovery(self, payloads: list[dict[str, Any]]) -> list[dict[str, Any]]:
         sanitized = []
@@ -444,6 +632,7 @@ class MonitorService:
                     "target": payload["target"],
                     "interval_seconds": payload.get("interval_seconds"),
                     "group_id": payload.get("group_id"),
+                    "credential_id": payload.get("credential_id"),
                     "enabled": payload.get("enabled", True),
                     "test_on_save": False,
                     "config": payload.get("config") or {},
@@ -455,21 +644,27 @@ class MonitorService:
         current = self.get_monitor(monitor_id, include_secrets=True)
         if payload.get("name") and payload["name"] != current["name"] and hasattr(self.ha, "delete_monitor_states"):
             await self.ha.delete_monitor_states(current)
+        updated_config = preserve_existing_secrets(payload.get("config", current["config"]), current["config"])
+        if payload.get("credential_id", current.get("credential_id")) is not None:
+            for field in CREDENTIAL_AUTH_FIELDS:
+                if field in current["config"] and field not in updated_config:
+                    updated_config[field] = current["config"][field]
         merged = {
             "type": payload.get("type", current["type"]),
             "name": payload.get("name", current["name"]),
             "target": payload.get("target", current["target"]),
             "interval_seconds": payload.get("interval_seconds", current["interval_seconds"]),
             "group_id": payload.get("group_id", current.get("group_id")),
+            "credential_id": payload.get("credential_id", current.get("credential_id")),
             "enabled": payload.get("enabled", current["enabled"]),
-            "config": preserve_existing_secrets(payload.get("config", current["config"]), current["config"]),
+            "config": updated_config,
         }
         monitor = self._normalize_payload(merged)
         self._ensure_unique_url_monitor(monitor, exclude_id=monitor_id)
         self.db.execute(
             """
             UPDATE monitors
-            SET type = ?, name = ?, target = ?, interval_seconds = ?, group_id = ?, enabled = ?,
+            SET type = ?, name = ?, target = ?, interval_seconds = ?, group_id = ?, credential_id = ?, enabled = ?,
                 config_json = ?, failure_count = 0, recovery_count = 0, last_raw_status = NULL,
                 updated_at = datetime('now')
             WHERE id = ?
@@ -480,6 +675,7 @@ class MonitorService:
                 monitor["target"],
                 monitor["interval_seconds"],
                 monitor["group_id"],
+                monitor.get("credential_id"),
                 int(monitor["enabled"]),
                 dumps_json(self.secrets.split_config(monitor_id, monitor["config"])),
                 monitor_id,
@@ -780,6 +976,7 @@ class MonitorService:
 
     async def _check(self, monitor: dict[str, Any]) -> CheckResult:
         try:
+            monitor = self._monitor_with_effective_credentials(monitor)
             plugin = get_plugin(monitor["type"])
             return await plugin.check(
                 monitor,
@@ -2006,6 +2203,7 @@ class MonitorService:
             "summary": summary,
             "monitors": monitors,
             "groups": self.list_groups(),
+            "credentials": self.list_credentials(),
             "settings": self.get_settings(),
             "monitor_types": self.get_monitor_types(),
             "presets": self.get_presets(),
@@ -2179,10 +2377,21 @@ class MonitorService:
     def _normalize_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
         monitor_type = resolve_type(payload["type"])
         config = self._normalize_monitor_config(payload.get("config") or {})
+        credential_id = payload.get("credential_id")
+        validation_config = dict(config)
+        if credential_id is not None:
+            credential = self._credential_for_monitor(int(credential_id), monitor_type)
+            validation_config["username"] = credential.get("username") or validation_config.get("username")
+            validation_config["auth_method"] = "private_key" if credential["kind"] == "ssh_private_key" else "password"
         try:
             plugin = get_plugin(monitor_type)
-            target, config = plugin.validate(payload["target"], config, self.config)
-            config = self._normalize_common_monitor_config(config)
+            target, validated_config = plugin.validate(payload["target"], validation_config, self.config)
+            for field in CREDENTIAL_AUTH_FIELDS:
+                if field in config:
+                    validated_config[field] = config[field]
+                else:
+                    validated_config.pop(field, None)
+            config = self._normalize_common_monitor_config(validated_config)
         except HTTPException:
             raise
         except Exception as exc:
@@ -2193,6 +2402,7 @@ class MonitorService:
             "target": target,
             "interval_seconds": int(payload.get("interval_seconds") or self.get_settings()["default_interval_seconds"]),
             "group_id": payload.get("group_id"),
+            "credential_id": int(credential_id) if credential_id is not None else None,
             "enabled": bool(payload.get("enabled", True)),
             "config": config,
         }
@@ -2226,8 +2436,8 @@ class MonitorService:
     def _insert_monitor(self, monitor: dict[str, Any]) -> int:
         cursor = self.db.execute(
             """
-            INSERT INTO monitors(type, name, target, interval_seconds, group_id, enabled, config_json)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO monitors(type, name, target, interval_seconds, group_id, credential_id, enabled, config_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 monitor["type"],
@@ -2235,6 +2445,7 @@ class MonitorService:
                 monitor["target"],
                 monitor["interval_seconds"],
                 monitor["group_id"],
+                monitor.get("credential_id"),
                 int(monitor["enabled"]),
                 "{}",
             ),
@@ -2332,6 +2543,7 @@ class MonitorService:
         row["recovery_count"] = int(row.get("recovery_count") or 0)
         row["type"] = resolve_type(row["type"])
         row["config"] = self.secrets.hydrate(int(row["id"]), loads_json(row.pop("config_json", None), {}))
+        row["credential"] = self._credential_reference(row.get("credential_id"))
         if mask_secrets:
             row["config"] = sanitize_secrets(row["config"])
         else:

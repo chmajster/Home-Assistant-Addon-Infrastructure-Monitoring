@@ -22,6 +22,8 @@ from .logging_config import configure_logging
 from .migrations import migrate
 from .monitoring import MonitorService
 from .schemas import (
+    CredentialCreate,
+    CredentialUpdate,
     DiscoveryImportIn,
     DiscoveryScanIn,
     GroupIn,
@@ -188,6 +190,41 @@ async def presets() -> list[dict[str, Any]]:
     return service.get_presets()
 
 
+@app.get("/api/credentials")
+async def credentials() -> list[dict[str, Any]]:
+    return service.list_credentials()
+
+
+@app.get("/api/credentials/{credential_id}")
+async def get_credential(credential_id: int) -> dict[str, Any]:
+    try:
+        return service.get_credential(credential_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Profil danych dostępowych nie istnieje") from exc
+
+
+@app.post("/api/credentials")
+async def create_credential(payload: CredentialCreate) -> dict[str, Any]:
+    return service.create_credential(payload.model_dump())
+
+
+@app.put("/api/credentials/{credential_id}")
+async def update_credential(credential_id: int, payload: CredentialUpdate) -> dict[str, Any]:
+    try:
+        return service.update_credential(credential_id, payload.model_dump(exclude_unset=True))
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Profil danych dostępowych nie istnieje") from exc
+
+
+@app.delete("/api/credentials/{credential_id}")
+async def delete_credential(credential_id: int) -> dict[str, str]:
+    try:
+        service.delete_credential(credential_id)
+        return {"status": "deleted"}
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Profil danych dostępowych nie istnieje") from exc
+
+
 @app.get("/api/groups")
 async def groups() -> list[dict[str, Any]]:
     return service.list_groups()
@@ -240,12 +277,23 @@ async def test_monitor(payload: MonitorIn) -> dict[str, Any]:
 
 @app.post("/api/monitors/import")
 async def import_monitors(payload: MonitorsImportIn) -> dict[str, Any]:
-    monitors = await service.create_monitors_bulk([monitor.model_dump() for monitor in payload.monitors])
-    return {"created": len(monitors), "monitors": monitors}
+    values = [monitor.model_dump() for monitor in payload.monitors]
+    warnings: list[str] = []
+    for index, monitor in enumerate(values):
+        credential_id = monitor.get("credential_id")
+        if credential_id is None:
+            continue
+        try:
+            service.get_credential(int(credential_id))
+        except KeyError:
+            monitor["credential_id"] = None
+            warnings.append(f"Monitor {index + 1}: pominięto nieistniejący profil danych dostępowych {credential_id}")
+    monitors = await service.create_monitors_bulk(values)
+    return {"created": len(monitors), "monitors": monitors, "warnings": warnings}
 
 
 @app.post("/api/discovery/scan")
-async def discovery_scan(payload: DiscoveryScanIn) -> list[dict[str, Any]]:
+async def discovery_scan(payload: DiscoveryScanIn) -> dict[str, Any]:
     data = payload.model_dump()
     data["sources"] = payload.normalized_sources()
     return await service.scan_discovery(data)

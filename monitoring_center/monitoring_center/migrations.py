@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 
 from .database import Database, dumps_json, loads_json
 
-SCHEMA_VERSION = 14
+SCHEMA_VERSION = 15
 
 
 def migrate(db: Database) -> None:
@@ -63,6 +63,9 @@ def migrate(db: Database) -> None:
     if version < 14:
         _migration_014(db)
         db.execute("INSERT INTO schema_migrations(version) VALUES (?)", (14,))
+    if version < 15:
+        _migration_015(db)
+        db.execute("INSERT INTO schema_migrations(version) VALUES (?)", (15,))
 
 
 def _backup_database(db: Database) -> None:
@@ -541,5 +544,35 @@ def _migration_014(db: Database) -> None:
         CREATE INDEX IF NOT EXISTS idx_incidents_ended ON incidents(ended_at, id);
         CREATE INDEX IF NOT EXISTS idx_events_cursor ON events(created_at DESC, id DESC);
         CREATE INDEX IF NOT EXISTS idx_snapshots_cursor ON website_snapshots(created_at DESC, id DESC);
+        """
+    )
+
+
+def _migration_015(db: Database) -> None:
+    db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS credential_profiles (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+            kind TEXT NOT NULL CHECK(kind IN ('username_password', 'ssh_private_key')),
+            username TEXT,
+            description TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE TABLE IF NOT EXISTS credential_secrets (
+            credential_id INTEGER NOT NULL,
+            field TEXT NOT NULL,
+            encrypted_value TEXT NOT NULL,
+            updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+            PRIMARY KEY (credential_id, field),
+            FOREIGN KEY (credential_id) REFERENCES credential_profiles(id) ON DELETE CASCADE
+        );
+        ALTER TABLE monitors ADD COLUMN credential_id INTEGER
+            REFERENCES credential_profiles(id) ON DELETE SET NULL;
+        CREATE INDEX IF NOT EXISTS idx_monitors_credential ON monitors(credential_id);
+        CREATE INDEX IF NOT EXISTS idx_credentials_kind ON credential_profiles(kind);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_credentials_name_nocase
+            ON credential_profiles(name COLLATE NOCASE);
         """
     )

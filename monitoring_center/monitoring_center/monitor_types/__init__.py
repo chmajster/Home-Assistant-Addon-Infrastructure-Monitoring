@@ -83,6 +83,28 @@ LEGACY_TYPE_MAP = {
     "website": "http_hash",
 }
 
+SSH_CREDENTIAL_TYPES = {
+    "ssh_command",
+    "docker_container",
+    "docker_compose_service",
+    "docker_healthcheck",
+    "linux_host",
+    "disk_usage",
+    "backup_age",
+    "backup_file",
+    "ha_backup",
+    "file_exists",
+    "file_age",
+    "file_hash",
+    "directory_size",
+    "directory_file_count",
+    "ssh_log_regex",
+    "journald_regex",
+    "docker_log_regex",
+    "unifi_device",
+    "unifi_wan",
+}
+
 
 PRESETS: list[dict[str, Any]] = [
     {
@@ -217,6 +239,15 @@ def get_plugin(monitor_type: str) -> MonitorTypePlugin:
     return PLUGINS[resolved]
 
 
+def credential_kinds_for_type(monitor_type: str) -> list[str]:
+    resolved = resolve_type(monitor_type)
+    if resolved in SSH_CREDENTIAL_TYPES:
+        return ["username_password", "ssh_private_key"]
+    if resolved == "mqtt_monitor":
+        return ["username_password"]
+    return []
+
+
 def list_types() -> list[dict[str, Any]]:
     return [
         {
@@ -224,6 +255,7 @@ def list_types() -> list[dict[str, Any]]:
             "label": plugin.label,
             "category": plugin.category,
             "default_interval": plugin.default_interval,
+            "credential_kinds": credential_kinds_for_type(plugin.type),
         }
         for plugin in PLUGINS.values()
     ]

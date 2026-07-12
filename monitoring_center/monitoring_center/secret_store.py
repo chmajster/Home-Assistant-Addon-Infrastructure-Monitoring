@@ -26,7 +26,10 @@ class SecretStore:
         self._key = self._load_or_create_key()
 
     def _load_or_create_key(self) -> bytes:
-        encrypted = self.db.fetchone("SELECT 1 AS present FROM monitor_secrets LIMIT 1")
+        encrypted = self.db.fetchone(
+            """SELECT 1 AS present FROM monitor_secrets
+               UNION ALL SELECT 1 AS present FROM credential_secrets LIMIT 1"""
+        )
         if self.key_path.exists():
             try:
                 key = self.key_path.read_bytes()
@@ -49,26 +52,71 @@ class SecretStore:
         return key
 
     def encrypt(self, value: Any, monitor_id: int, field: str) -> str:
+        return self._encrypt(value, f"monitor:{monitor_id}:{field}:v1")
+
+    def decrypt(self, value: str, monitor_id: int, field: str) -> Any:
+        return self._decrypt(value, f"monitor:{monitor_id}:{field}:v1")
+
+    def encrypt_credential(self, value: Any, credential_id: int, field: str) -> str:
+        return self._encrypt(value, f"credential:{credential_id}:{field}:v1")
+
+    def decrypt_credential(self, value: str, credential_id: int, field: str) -> Any:
+        return self._decrypt(value, f"credential:{credential_id}:{field}:v1")
+
+    def _encrypt(self, value: Any, aad: str) -> str:
         register_secret(value)
         nonce = os.urandom(12)
         plaintext = json.dumps(value, ensure_ascii=False).encode()
-        aad = f"monitor:{monitor_id}:{field}:v1".encode()
-        encrypted = AESGCM(self._key).encrypt(nonce, plaintext, aad)
+        encrypted = AESGCM(self._key).encrypt(nonce, plaintext, aad.encode())
         import base64
 
         return PREFIX + base64.urlsafe_b64encode(nonce + encrypted).decode()
 
-    def decrypt(self, value: str, monitor_id: int, field: str) -> Any:
+    def _decrypt(self, value: str, aad: str) -> Any:
         if not value.startswith(PREFIX):
             raise SecretStoreError("Nieobsługiwany format zaszyfrowanej wartości")
         import base64
 
-        raw = base64.urlsafe_b64decode(value.removeprefix(PREFIX))
         try:
-            plaintext = AESGCM(self._key).decrypt(raw[:12], raw[12:], f"monitor:{monitor_id}:{field}:v1".encode())
-            return json.loads(plaintext)
+            raw = base64.urlsafe_b64decode(value.removeprefix(PREFIX))
+            plaintext = AESGCM(self._key).decrypt(raw[:12], raw[12:], aad.encode())
+            result = json.loads(plaintext)
+            register_secret(result)
+            return result
         except Exception as exc:
             raise SecretStoreError("Nie można odszyfrować sekretu; sprawdź klucz główny") from exc
+
+    def update_credential_secrets(
+        self,
+        credential_id: int,
+        values: dict[str, Any],
+        clear_fields: set[str] | None = None,
+    ) -> None:
+        with self.db.transaction():
+            for field in clear_fields or set():
+                self.db.execute(
+                    "DELETE FROM credential_secrets WHERE credential_id=? AND field=?",
+                    (credential_id, field),
+                )
+            for field, value in values.items():
+                if value in (None, "", "********"):
+                    continue
+                self.db.execute(
+                    """INSERT INTO credential_secrets(credential_id, field, encrypted_value, updated_at)
+                       VALUES (?, ?, ?, datetime('now'))
+                       ON CONFLICT(credential_id, field) DO UPDATE SET
+                         encrypted_value=excluded.encrypted_value, updated_at=datetime('now')""",
+                    (credential_id, field, self.encrypt_credential(value, credential_id, field)),
+                )
+
+    def credential_secrets(self, credential_id: int) -> dict[str, Any]:
+        values: dict[str, Any] = {}
+        for row in self.db.fetchall(
+            "SELECT field, encrypted_value FROM credential_secrets WHERE credential_id=?",
+            (credential_id,),
+        ):
+            values[row["field"]] = self.decrypt_credential(row["encrypted_value"], credential_id, row["field"])
+        return values
 
     def split_config(self, monitor_id: int, config: dict[str, Any]) -> dict[str, Any]:
         clean: dict[str, Any] = {}
@@ -145,6 +193,14 @@ class SecretStore:
             (row["monitor_id"], row["field"], self.decrypt(row["encrypted_value"], row["monitor_id"], row["field"]))
             for row in self.db.fetchall("SELECT * FROM monitor_secrets")
         ]
+        credential_values = [
+            (
+                row["credential_id"],
+                row["field"],
+                self.decrypt_credential(row["encrypted_value"], row["credential_id"], row["field"]),
+            )
+            for row in self.db.fetchall("SELECT * FROM credential_secrets")
+        ]
         old_key = self._key
         self._key = new_key
         try:
@@ -154,6 +210,12 @@ class SecretStore:
                         """UPDATE monitor_secrets SET encrypted_value=?, updated_at=datetime('now')
                            WHERE monitor_id=? AND field=?""",
                         (self.encrypt(value, monitor_id, field), monitor_id, field),
+                    )
+                for credential_id, field, value in credential_values:
+                    self.db.execute(
+                        """UPDATE credential_secrets SET encrypted_value=?, updated_at=datetime('now')
+                           WHERE credential_id=? AND field=?""",
+                        (self.encrypt_credential(value, credential_id, field), credential_id, field),
                     )
             temporary = self.key_path.with_suffix(".new")
             temporary.write_bytes(new_key)

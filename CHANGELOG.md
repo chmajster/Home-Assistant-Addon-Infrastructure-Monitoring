@@ -6,6 +6,23 @@ Format opiera się na konwencji Keep a Changelog, a wersjonowanie dodatku powinn
 
 ## [Unreleased]
 
+## [0.13.1] - 2026-07-12
+
+- Podniesiono wersję wydania po ostatnich poprawkach.
+
+## [0.13.0] - 2026-07-12
+
+### Dodano
+
+- Wielokrotnego użytku profile login/hasło oraz login/klucz prywatny SSH.
+- Bezpieczne przypisywanie profilu do monitorów SSH i MQTT oraz zarządzanie profilami w panelu.
+- Schemat bazy v15 z osobnym magazynem zaszyfrowanych sekretów profili.
+
+### Bezpieczeństwo
+
+- Sekrety profili używają AES-256-GCM i osobnego AAD, nie trafiają do API, DOM, eksportu ani konfiguracji monitora.
+- Rotacja i kontrola utraconego klucza głównego obejmuje `monitor_secrets` i `credential_secrets`.
+
 ## [0.12.0] - 2026-07-12
 
 ### Dodano

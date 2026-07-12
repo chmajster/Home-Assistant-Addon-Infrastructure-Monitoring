@@ -1,5 +1,24 @@
 # Monitoring Center
 
+## Aktualizacja 0.12.0 → 0.13.1
+
+Wersja 0.13.1 dodaje profile danych dostępowych współdzielone przez wiele monitorów. Migracja schematu 15
+tworzy `credential_profiles`, `credential_secrets` oraz opcjonalne powiązanie `monitors.credential_id` bez
+zmiany istniejących poświadczeń zapisanych bezpośrednio w monitorach.
+
+### Profile danych dostępowych
+
+1. Otwórz widok **Dane dostępowe** i wybierz **Dodaj dane dostępowe**.
+2. Wybierz profil login/hasło albo login/klucz prywatny SSH i zapisz sekret.
+3. W formularzu monitora wybierz profil w sekcji **Dane dostępowe**.
+
+Profile login/hasło współpracują z MQTT i wszystkimi monitorami SSH. Profile klucza prywatnego są dostępne
+wyłącznie dla monitorów SSH. Zmiana profilu obowiązuje przy następnym teście wszystkich przypisanych monitorów.
+
+Sekrety są szyfrowane AES-256-GCM w osobnej tabeli i odszyfrowywane tylko w pamięci na czas checku. Klucz
+główny znajduje się w `/data/monitoring_center.key`; należy archiwizować go razem z bazą. Utrata klucza
+uniemożliwia odszyfrowanie zarówno starych sekretów monitorów, jak i profili.
+
 ## Aktualizacja 0.11.0 → 0.12.0
 
 Migracja in-place zachowuje monitory, grupy, historię, incydenty i topologię. Pierwszy start tworzy backup

@@ -1,5 +1,5 @@
 export const state = {
-  monitors: [], groups: [], monitorTypes: [], presets: [], summary: null, diagnostics: null,
+  monitors: [], groups: [], credentials: [], monitorTypes: [], presets: [], summary: null, diagnostics: null,
   incidents: [], topology: { nodes: [], edges: [], version: 1 }, topologyConnectMode: false,
   topologyConnectSource: null, settings: null, selectedMonitorId: null, currentTest: null,
   monitorQuery: "", monitorTypeFilter: "all", monitorStatusFilter: "all", monitorGroupFilter: "all",
@@ -9,5 +9,5 @@ export const state = {
   eventTypeFilter: "", eventQuery: "", incidentStatusFilter: "all", incidentMonitorFilter: "",
   lastRefreshedAt: null, detailHistoryRows: [], detailHistoryPage: 1, detailHistoryPageSize: 100,
   detailHistoryFilters: { from: "", to: "", status: "all", search: "", sort: "date_desc" },
-  discoveryProposals: [],
+  discoveryProposals: [], discoveryReport: null,
 };

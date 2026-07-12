@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Monitoring Center</title>
-    <link rel="stylesheet" href="static/styles.css?v=0.12.1" />
+    <link rel="stylesheet" href="static/styles.css?v=0.13.1" />
   </head>
   <body>
     <svg class="icon-sprite" aria-hidden="true" focusable="false">
@@ -24,6 +24,12 @@
       <symbol id="icon-groups" viewBox="0 0 24 24">
         <path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H9l2 2h7.5A2.5 2.5 0 0 1 21 9.5v7A2.5 2.5 0 0 1 18.5 19h-13A2.5 2.5 0 0 1 3 16.5z"></path>
         <path d="M3 10h18"></path>
+      </symbol>
+      <symbol id="icon-credentials" viewBox="0 0 24 24">
+        <circle cx="8" cy="15" r="4"></circle>
+        <path d="m11 12 8-8"></path>
+        <path d="m16 7 2 2"></path>
+        <path d="m18 5 2 2"></path>
       </symbol>
       <symbol id="icon-incidents" viewBox="0 0 24 24">
         <path d="M10.3 4.2 2.8 17.1A2 2 0 0 0 4.5 20h15a2 2 0 0 0 1.7-2.9L13.7 4.2a2 2 0 0 0-3.4 0z"></path>
@@ -72,6 +78,7 @@
           <button class="tab active" data-tab="dashboard" aria-current="page"><svg class="nav-icon" aria-hidden="true"><use href="#icon-dashboard"></use></svg><span>Dashboard</span></button>
           <button class="tab" data-tab="monitoring"><svg class="nav-icon" aria-hidden="true"><use href="#icon-monitoring"></use></svg><span>Monitoring</span></button>
           <button class="tab" data-tab="groups"><svg class="nav-icon" aria-hidden="true"><use href="#icon-groups"></use></svg><span>Grupy</span></button>
+          <button class="tab" data-tab="credentials"><svg class="nav-icon" aria-hidden="true"><use href="#icon-credentials"></use></svg><span>Dane dostępowe</span></button>
           <button class="tab" data-tab="incidents"><svg class="nav-icon" aria-hidden="true"><use href="#icon-incidents"></use></svg><span>Incydenty</span></button>
           <button class="tab" data-tab="history"><svg class="nav-icon" aria-hidden="true"><use href="#icon-history"></use></svg><span>Historia</span></button>
           <button class="tab" data-tab="events"><svg class="nav-icon" aria-hidden="true"><use href="#icon-events"></use></svg><span>Zdarzenia</span></button>
@@ -295,6 +302,17 @@
               </div>
               <div id="groupMonitorList" class="group-monitor-list empty">Wybierz grupę, aby zobaczyć przypisane monitory.</div>
             </section>
+          </section>
+
+          <section id="credentials" class="view">
+            <div class="view-head">
+              <div>
+                <h2>Dane dostępowe</h2>
+                <p>Twórz bezpieczne profile i używaj ich w wielu monitorach.</p>
+              </div>
+              <button id="addCredentialBtn" class="primary" type="button">Dodaj dane dostępowe</button>
+            </div>
+            <div id="credentialList" class="credential-grid"></div>
           </section>
 
           <section id="topology" class="view">
@@ -632,36 +650,76 @@
     <nav class="mobile-nav" aria-label="Nawigacja mobilna">
       <button class="tab active" data-tab="dashboard" aria-current="page"><svg class="nav-icon" aria-hidden="true"><use href="#icon-dashboard"></use></svg><span>Dashboard</span></button>
       <button class="tab" data-tab="monitoring"><svg class="nav-icon" aria-hidden="true"><use href="#icon-monitoring"></use></svg><span>Monitoring</span></button>
+      <button class="tab" data-tab="credentials"><svg class="nav-icon" aria-hidden="true"><use href="#icon-credentials"></use></svg><span>Dostęp</span></button>
       <button class="tab" data-tab="incidents"><svg class="nav-icon" aria-hidden="true"><use href="#icon-incidents"></use></svg><span>Incydenty</span></button>
       <button class="tab" data-tab="history"><svg class="nav-icon" aria-hidden="true"><use href="#icon-history"></use></svg><span>Historia</span></button>
       <button class="tab" data-tab="events"><svg class="nav-icon" aria-hidden="true"><use href="#icon-events"></use></svg><span>Zdarzenia</span></button>
       <button class="tab" data-tab="settings"><svg class="nav-icon" aria-hidden="true"><use href="#icon-settings"></use></svg><span>Więcej</span></button>
     </nav>
 
+    <dialog id="credentialDialog" class="credential-dialog">
+      <form id="credentialForm">
+        <input type="hidden" name="id" />
+        <div class="drawer-head">
+          <div>
+            <h2 id="credentialDialogTitle">Dodaj dane dostępowe</h2>
+            <p>Sekrety są szyfrowane i nigdy nie są zwracane przez API.</p>
+          </div>
+          <button type="button" data-dialog-close="credentialDialog" aria-label="Zamknij">×</button>
+        </div>
+        <div class="grid-form credential-form-grid">
+          <label>Nazwa<input name="name" required maxlength="120" /></label>
+          <label>Typ<select name="kind"><option value="username_password">Login i hasło</option><option value="ssh_private_key">Login i klucz prywatny SSH</option></select></label>
+          <label>Login<input name="username" maxlength="255" autocomplete="username" /></label>
+          <label class="credential-description">Opis<input name="description" maxlength="500" /></label>
+        </div>
+        <div id="credentialPasswordFields" class="credential-secret-section">
+          <label>Hasło<input name="password" type="password" maxlength="4096" autocomplete="new-password" /></label>
+          <small id="credentialPasswordHint">Hasło jest wymagane przy tworzeniu profilu.</small>
+          <label id="clearCredentialPassword" class="check hidden"><input name="clear_password" type="checkbox" /> Usuń zapisane hasło</label>
+        </div>
+        <div id="credentialKeyFields" class="credential-secret-section hidden">
+          <label>Klucz prywatny SSH<textarea name="private_key" rows="8" maxlength="65536" autocomplete="off"></textarea></label>
+          <small id="credentialKeyHint">Klucz SSH jest wymagany przy tworzeniu profilu.</small>
+          <label id="clearCredentialKey" class="check hidden"><input name="clear_private_key" type="checkbox" /> Usuń zapisany klucz SSH</label>
+          <label>Passphrase<input name="private_key_passphrase" type="password" maxlength="4096" autocomplete="new-password" /></label>
+          <small id="credentialPassphraseHint">Opcjonalne hasło do klucza prywatnego.</small>
+          <label id="clearCredentialPassphrase" class="check hidden"><input name="clear_private_key_passphrase" type="checkbox" /> Usuń zapisane passphrase</label>
+        </div>
+        <p class="credential-security-note">Pozostaw pole sekretu puste podczas edycji, aby zachować obecną wartość.</p>
+        <menu>
+          <button type="button" data-dialog-close="credentialDialog">Anuluj</button>
+          <button id="saveCredentialBtn" class="primary">Zapisz profil</button>
+        </menu>
+      </form>
+    </dialog>
+
     <dialog id="discoveryDialog" class="drawer-dialog monitor-dialog">
       <form id="discoveryForm" class="monitor-dialog-form" method="dialog">
         <div class="drawer-head">
           <div>
             <h2>Wykryj monitory</h2>
-            <p>Znajdz potencjalne uslugi i wybierz, ktore chcesz dodac.</p>
+            <p>Znajdź potencjalne usługi i sprawdź wynik każdego źródła skanowania.</p>
           </div>
           <button id="closeDiscoveryBtn" class="dialog-close-btn" type="button" aria-label="Zamknij">×</button>
         </div>
         <section class="form-section grid-form">
           <label class="check"><input name="source_home_assistant" type="checkbox" checked /> Home Assistant</label>
-          <label class="check"><input name="source_network" type="checkbox" /> Siec lokalna</label>
+          <label class="check"><input name="source_network" type="checkbox" /> Sieć lokalna</label>
           <label class="check"><input name="source_docker" type="checkbox" /> Docker</label>
           <label class="check"><input name="source_unifi" type="checkbox" /> UniFi / SNMP</label>
           <label>Zakres IP CIDR<input name="network_cidr" placeholder="192.168.1.0/24" /></label>
           <label>Timeout s<input name="timeout_seconds" type="number" min="1" max="30" step="0.5" value="3" /></label>
-          <label>Maks. hostow<input name="max_hosts" type="number" min="1" max="1024" value="64" /></label>
+          <label>Maks. hostów<input name="max_hosts" type="number" min="1" max="1024" value="64" /></label>
+          <label>Limit całego źródła (s)<input name="total_timeout_seconds" type="number" min="1" max="300" value="60" /></label>
         </section>
         <section class="form-section">
           <div class="panel-head">
-            <h3>Propozycje</h3>
+            <h3>Wynik skanu</h3>
             <span id="discoverySummary" class="badge unknown">Brak skanu</span>
           </div>
-          <div id="discoveryResults" class="list empty">Uruchom skanowanie, aby zobaczyc propozycje.</div>
+          <div id="discoverySourceResults" class="discovery-source-results" aria-live="polite"></div>
+          <div id="discoveryResults" class="list empty" aria-live="polite">Uruchom skanowanie, aby zobaczyć propozycje.</div>
         </section>
         <menu class="dialog-footer">
           <button type="button" data-dialog-close="discoveryDialog">Anuluj</button>
@@ -694,6 +752,18 @@
           <label class="check"><input name="enabled" type="checkbox" checked /> Aktywny</label>
           <label class="check"><input name="test_on_save" type="checkbox" checked /> Testuj przy zapisie</label>
         </section>
+        <section id="monitorCredentialSection" class="form-section">
+          <h3>Dane dostępowe</h3>
+          <div class="monitor-credential-picker">
+            <label>Profil
+              <select name="credential_id" id="monitorCredentialSelect">
+                <option value="">Brak profilu – użyj danych wpisanych w monitorze</option>
+              </select>
+            </label>
+            <button id="manageCredentialsBtn" type="button">Zarządzaj profilami</button>
+          </div>
+          <div id="monitorCredentialInfo" class="credential-info empty">Ten typ monitora nie używa profili danych dostępowych.</div>
+        </section>
         <section id="typeOptionsSection" class="form-section">
           <h3>Ustawienia typu</h3>
           <div id="tcpOptions" class="nested type-options"><label>Host/IP<input name="tcp_host" placeholder="192.168.1.10" /></label><label>Port<input name="tcp_port" type="number" min="1" max="65535" placeholder="22" /></label></div>
@@ -703,10 +773,10 @@
           <div id="sslOptions" class="nested type-options"><label>Host<input name="ssl_host" placeholder="example.com" /></label><label>Port<input name="ssl_port" type="number" min="1" max="65535" placeholder="443" /></label><label>Próg warning dni<input name="warning_days" type="number" min="1" max="3650" placeholder="30" /></label><label>Próg error dni<input name="error_days" type="number" min="0" max="3650" placeholder="7" /></label></div>
           <div id="restOptions" class="nested type-options"><label>Ścieżka JSON<input name="json_path" placeholder="status.online" /></label><label>Oczekiwana wartość<input name="expected_value" placeholder="true" /></label></div>
           <div id="haEntityOptions" class="nested type-options"><label>Stany alarmowe<input name="alert_states" placeholder="unavailable,unknown,off" /></label></div>
-          <div id="mqttOptions" class="nested type-options"><label>Host/IP brokera<input name="mqtt_host" placeholder="192.168.1.60" /></label><label>Port MQTT<input name="mqtt_port" type="number" min="1" max="65535" placeholder="1883" /></label><label>Topic<input name="topic" placeholder="home/status" /></label><label>Timeout topicu s<input name="topic_timeout_seconds" type="number" min="1" /></label></div>
+          <div id="mqttOptions" class="nested type-options"><label>Host/IP brokera<input name="mqtt_host" placeholder="192.168.1.60" /></label><label>Port MQTT<input name="mqtt_port" type="number" min="1" max="65535" placeholder="1883" /></label><label>Topic<input name="topic" placeholder="home/status" /></label><label>Timeout topicu s<input name="topic_timeout_seconds" type="number" min="1" /></label><label class="direct-credential-field">Login MQTT<input name="mqtt_username" autocomplete="username" /></label><label class="direct-credential-field">Hasło MQTT<input name="mqtt_password" type="password" autocomplete="new-password" placeholder="zostaw puste przy edycji" /></label></div>
           <div id="sshOptions" class="nested type-options">
-            <label>Host SSH<input name="ssh_host" placeholder="192.168.1.10" /></label><label>Port SSH<input name="ssh_port" type="number" min="1" max="65535" placeholder="22" /></label><label>Login<input name="ssh_username" placeholder="root" /></label>
-            <label>Metoda logowania<select name="ssh_auth_method"><option value="password">Haslo</option><option value="private_key">Klucz prywatny</option></select></label><label>Haslo<input name="ssh_password" type="password" autocomplete="new-password" placeholder="zostaw puste przy edycji" /></label><label>Klucz prywatny<textarea name="ssh_private_key" rows="5" autocomplete="off" placeholder="zostaw puste przy edycji"></textarea></label><label>Passphrase<input name="ssh_private_key_passphrase" type="password" autocomplete="new-password" /></label>
+            <label>Host SSH<input name="ssh_host" placeholder="192.168.1.10" /></label><label>Port SSH<input name="ssh_port" type="number" min="1" max="65535" placeholder="22" /></label><label class="direct-credential-field">Login<input name="ssh_username" placeholder="root" /></label>
+            <label class="direct-credential-field">Metoda logowania<select name="ssh_auth_method"><option value="password">Hasło</option><option value="private_key">Klucz prywatny</option></select></label><label class="direct-credential-field">Hasło<input name="ssh_password" type="password" autocomplete="new-password" placeholder="zostaw puste przy edycji" /></label><label class="direct-credential-field">Klucz prywatny<textarea name="ssh_private_key" rows="5" autocomplete="off" placeholder="zostaw puste przy edycji"></textarea></label><label class="direct-credential-field">Passphrase<input name="ssh_private_key_passphrase" type="password" autocomplete="new-password" /></label>
             <label>Komenda Bash<textarea name="ssh_command" rows="3" placeholder="systemctl is-active docker"></textarea></label><label>Timeout polaczenia s<input name="ssh_connect_timeout_seconds" type="number" min="1" placeholder="10" /></label><label>Timeout komendy s<input name="ssh_command_timeout_seconds" type="number" min="1" placeholder="30" /></label>
             <label>Exit code sukcesu<input name="ssh_success_exit_codes" placeholder="0" /></label><label>Exit code warning<input name="ssh_warning_exit_codes" placeholder="1" /></label><label>Exit code bledu<input name="ssh_error_exit_codes" placeholder="2,3,4,5" /></label>
             <label>Regex sukcesu stdout<input name="ssh_success_stdout_regex" /></label><label>Regex warning stdout<input name="ssh_warning_stdout_regex" /></label><label>Regex bledu stdout<input name="ssh_error_stdout_regex" /></label>
@@ -832,6 +902,6 @@
     </dialog>
 
     <div id="toast" role="status" aria-label="Komunikat aplikacji" title="Kliknij, aby zamknąć"></div>
-    <script type="module" src="static/app.js?v=0.12.1"></script>
+    <script type="module" src="static/app.js?v=0.13.1"></script>
   </body>
 </html>

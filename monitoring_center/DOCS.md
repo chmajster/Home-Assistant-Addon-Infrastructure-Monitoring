@@ -30,6 +30,16 @@ Po uruchomieniu dodatek tworzy lokalny serwer na porcie `8099` i publikuje panel
 3. Dodaj urządzenie lub stronę WWW.
 4. Zostaw zaznaczoną opcję testu przy zapisie, aby od razu sprawdzić konfigurację.
 
+## Dane dostępowe
+
+Widok **Dane dostępowe** pozwala utworzyć współdzielony profil login/hasło lub login/klucz prywatny SSH.
+Profil wybiera się następnie w formularzu monitora. Login/hasło obsługuje MQTT i monitory SSH, natomiast
+klucz prywatny wyłącznie typy SSH. Monitor bez profilu nadal używa danych wpisanych bezpośrednio.
+
+Hasła, klucze i passphrase są przechowywane w `credential_secrets`, szyfrowane AES-256-GCM i nigdy nie są
+zwracane przez API ani eksportowane jawnie. Klucz główny `/data/monitoring_center.key` musi być chroniony
+i archiwizowany z bazą. Bez niego odzyskanie zaszyfrowanych poświadczeń nie jest możliwe.
+
 ## Ignorowanie dynamicznych fragmentów stron
 
 W monitorze WWW można podać:

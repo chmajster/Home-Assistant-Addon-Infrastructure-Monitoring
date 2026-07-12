@@ -1,6 +1,6 @@
 # Home Assistant Monitoring
 
-Aktualna wersja: **0.12.0**. Repozytorium: https://github.com/chmajster/Home-Assistant-Addon-Infrastructure-Monitoring
+Aktualna wersja: **0.13.1**. Repozytorium: https://github.com/chmajster/Home-Assistant-Addon-Infrastructure-Monitoring
 
 Aktualizacja z 0.11.0 jest migracją in-place. Przy pierwszym starcie powstaje spójny backup SQLite,
 wykonywane są migracje 11–14 i jednorazowe szyfrowanie sekretów. Zachowaj razem bazę oraz plik klucza z `/data`.

@@ -4,6 +4,22 @@ All notable changes to the **Monitoring Center** Home Assistant add-on are docum
 
 ## [Unreleased]
 
+## [0.13.1] - 2026-07-12
+
+- Podniesiono wersję wydania po ostatnich poprawkach.
+
+## [0.13.0] - 2026-07-12
+
+### Added
+
+- Reusable username/password and SSH private-key credential profiles.
+- Credential management UI, monitor assignment, compatibility metadata and schema migration 15.
+
+### Security
+
+- Credential secrets use AES-256-GCM with credential-specific AAD and are never returned by the API or export.
+- Master-key rotation and missing-key protection cover both monitor and credential secrets.
+
 ## [0.12.0] - 2026-07-12
 
 ### Added

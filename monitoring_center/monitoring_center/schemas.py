@@ -14,6 +14,7 @@ class MonitorIn(BaseModel):
     target: str = Field(min_length=1, max_length=2048)
     interval_seconds: int | None = Field(default=None, ge=5, le=86400)
     group_id: int | None = None
+    credential_id: int | None = None
     enabled: bool = True
     config: dict[str, Any] = Field(default_factory=dict)
     test_on_save: bool = True
@@ -25,6 +26,7 @@ class MonitorUpdate(BaseModel):
     target: str | None = Field(default=None, min_length=1, max_length=2048)
     interval_seconds: int | None = Field(default=None, ge=5, le=86400)
     group_id: int | None = None
+    credential_id: int | None = None
     enabled: bool | None = None
     config: dict[str, Any] | None = None
     test_on_save: bool = False
@@ -53,6 +55,27 @@ class DiscoveryImportMonitorIn(MonitorIn):
 
 class DiscoveryImportIn(BaseModel):
     monitors: list[DiscoveryImportMonitorIn] = Field(default_factory=list, max_length=1000)
+
+
+class CredentialCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    kind: str = Field(min_length=1, max_length=32)
+    username: str | None = Field(default=None, max_length=255)
+    description: str | None = Field(default=None, max_length=500)
+    password: str | None = Field(default=None, max_length=4096)
+    private_key: str | None = Field(default=None, max_length=65536)
+    private_key_passphrase: str | None = Field(default=None, max_length=4096)
+
+
+class CredentialUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    kind: str | None = Field(default=None, min_length=1, max_length=32)
+    username: str | None = Field(default=None, max_length=255)
+    description: str | None = Field(default=None, max_length=500)
+    password: str | None = Field(default=None, max_length=4096)
+    private_key: str | None = Field(default=None, max_length=65536)
+    private_key_passphrase: str | None = Field(default=None, max_length=4096)
+    clear_secret_fields: list[str] = Field(default_factory=list, max_length=3)
 
 
 class GroupIn(BaseModel):

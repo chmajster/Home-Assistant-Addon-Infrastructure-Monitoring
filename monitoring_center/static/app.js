@@ -80,6 +80,7 @@ function bindNavigation() {
     if (state.selectedMonitorId) showSnapshots(state.selectedMonitorId);
   });
   $("#openDiscoveryBtn")?.addEventListener("click", openDiscoveryDialog);
+  $("#addCredentialBtn")?.addEventListener("click", () => openCredentialForm());
   $("#runSelfCheckBtn")?.addEventListener("click", runSelfCheck);
   $("#createSelfMonitorBtn")?.addEventListener("click", createSelfMonitor);
   bindDetailHistoryControls();
@@ -96,6 +97,13 @@ function bindForms() {
   $("#closeDiscoveryBtn")?.addEventListener("click", () => $("#discoveryDialog").close());
   $("#importDiscoveryBtn")?.addEventListener("click", importDiscoverySelection);
   $("#groupForm").addEventListener("submit", saveGroup);
+  $("#credentialForm").addEventListener("submit", saveCredential);
+  $("#credentialForm").elements.kind.addEventListener("change", renderCredentialSecretFields);
+  $("#monitorCredentialSelect").addEventListener("change", renderSelectedMonitorCredential);
+  $("#manageCredentialsBtn").addEventListener("click", () => {
+    $("#monitorDialog").close();
+    showView("credentials");
+  });
   $("#cancelGroupEditBtn").addEventListener("click", resetGroupForm);
   $("#groupForm").elements.color.addEventListener("input", syncGroupColorFromPicker);
   $("#groupForm").elements.color_hex.addEventListener("input", syncGroupColorFromHex);
@@ -251,6 +259,7 @@ async function refreshAll() {
   state.summary = bootstrap.summary;
   state.monitors = bootstrap.monitors;
   state.groups = bootstrap.groups;
+  state.credentials = bootstrap.credentials || [];
   state.settings = bootstrap.settings;
   state.monitorTypes = bootstrap.monitor_types;
   state.presets = bootstrap.presets;
@@ -266,6 +275,7 @@ async function refreshAll() {
   renderGroupOptions();
   renderMonitorLists();
   renderGroups();
+  renderCredentials();
   renderHistoryMonitorOptions();
   renderIncidentMonitorOptions();
   renderIncidents();
@@ -942,7 +952,45 @@ function renderTypeFields(type) {
   if (LOG_REGEX_TYPES.has(type)) visibleSections.push("#logRegexOptions");
   visibleSections.forEach((selector) => $(selector)?.classList.remove("hidden"));
   $("#typeOptionsSection")?.classList.toggle("hidden", visibleSections.length === 0);
+  renderMonitorCredentialOptions(type);
   renderMonitorTypeCards();
+  updateConfigPreview();
+}
+
+function renderMonitorCredentialOptions(type) {
+  const select = $("#monitorCredentialSelect");
+  const typeMetadata = state.monitorTypes.find((item) => item.type === type);
+  const allowedKinds = typeMetadata?.credential_kinds || [];
+  const previous = select.value;
+  const compatible = state.credentials.filter((credential) => allowedKinds.includes(credential.kind));
+  select.innerHTML = '<option value="">Brak profilu – użyj danych wpisanych w monitorze</option>'
+    + compatible.map((credential) => `<option value="${credential.id}">${escapeHtml(credential.name)}</option>`).join("");
+  if (previous && compatible.some((credential) => String(credential.id) === previous)) select.value = previous;
+  else if (previous) toast("Wybrany profil nie jest kompatybilny z nowym typem monitora.", "error");
+  select.disabled = allowedKinds.length === 0;
+  $("#monitorCredentialSection").classList.toggle("credential-not-supported", allowedKinds.length === 0);
+  renderSelectedMonitorCredential();
+}
+
+function renderSelectedMonitorCredential() {
+  const form = $("#monitorForm");
+  const info = $("#monitorCredentialInfo");
+  const credential = state.credentials.find((item) => String(item.id) === form.elements.credential_id.value);
+  const hasProfile = Boolean(credential);
+  $$(".direct-credential-field", form).forEach((field) => field.classList.toggle("hidden", hasProfile));
+  if (form.elements.credential_id.disabled) {
+    info.className = "credential-info empty";
+    info.textContent = "Ten typ monitora nie używa profili danych dostępowych.";
+  } else if (!credential) {
+    info.className = "credential-info";
+    info.textContent = "Poświadczenia będą pobierane bezpośrednio z konfiguracji monitora.";
+  } else {
+    info.className = "credential-info credential-info--selected";
+    info.innerHTML = `
+      <strong>${escapeHtml(credential.name)}</strong>
+      <span>${escapeHtml(credentialKindLabel(credential.kind))} · login: ${escapeHtml(credential.username || "—")}</span>
+      <small>${escapeHtml(credentialSecretSummary(credential))}. Poświadczenia będą pobierane z profilu podczas każdego testu.</small>`;
+  }
   updateConfigPreview();
 }
 
@@ -981,6 +1029,10 @@ function buildMonitorConfig(form, type) {
     if (form.elements.mqtt_port.value) config.port = Number(form.elements.mqtt_port.value);
     if (form.elements.topic.value.trim()) config.topic = form.elements.topic.value.trim();
     if (form.elements.topic_timeout_seconds.value) config.topic_timeout_seconds = Number(form.elements.topic_timeout_seconds.value);
+    if (!form.elements.credential_id.value) {
+      if (form.elements.mqtt_username.value.trim()) config.username = form.elements.mqtt_username.value.trim();
+      if (form.elements.mqtt_password.value) config.password = form.elements.mqtt_password.value;
+    }
   }
   if (SSH_CONFIG_TYPES.has(type)) addSshConfig(config, form);
   if (DOCKER_TYPES.has(type)) addDockerConfig(config, form);
@@ -999,11 +1051,13 @@ function buildMonitorConfig(form, type) {
 function addSshConfig(config, form) {
   if (form.elements.ssh_host.value.trim()) config.host = form.elements.ssh_host.value.trim();
   if (form.elements.ssh_port.value) config.port = Number(form.elements.ssh_port.value);
-  if (form.elements.ssh_username.value.trim()) config.username = form.elements.ssh_username.value.trim();
-  config.auth_method = form.elements.ssh_auth_method.value;
-  if (form.elements.ssh_password.value) config.password = form.elements.ssh_password.value;
-  if (form.elements.ssh_private_key.value) config.private_key = form.elements.ssh_private_key.value;
-  if (form.elements.ssh_private_key_passphrase.value) config.private_key_passphrase = form.elements.ssh_private_key_passphrase.value;
+  if (!form.elements.credential_id.value) {
+    if (form.elements.ssh_username.value.trim()) config.username = form.elements.ssh_username.value.trim();
+    config.auth_method = form.elements.ssh_auth_method.value;
+    if (form.elements.ssh_password.value) config.password = form.elements.ssh_password.value;
+    if (form.elements.ssh_private_key.value) config.private_key = form.elements.ssh_private_key.value;
+    if (form.elements.ssh_private_key_passphrase.value) config.private_key_passphrase = form.elements.ssh_private_key_passphrase.value;
+  }
   config.known_hosts_policy = "auto_add";
   if (form.elements.ssh_connect_timeout_seconds.value) config.connect_timeout_seconds = Number(form.elements.ssh_connect_timeout_seconds.value);
   if (form.elements.ssh_command_timeout_seconds.value) config.command_timeout_seconds = Number(form.elements.ssh_command_timeout_seconds.value);
@@ -1135,7 +1189,9 @@ function openDiscoveryDialog() {
   form?.reset();
   if (form?.elements.timeout_seconds) form.elements.timeout_seconds.value = "3";
   if (form?.elements.max_hosts) form.elements.max_hosts.value = "64";
+  if (form?.elements.total_timeout_seconds) form.elements.total_timeout_seconds.value = "60";
   state.discoveryProposals = [];
+  state.discoveryReport = null;
   renderDiscoveryResults();
   $("#discoveryDialog")?.showModal();
 }
@@ -1149,39 +1205,83 @@ async function runDiscoveryScan(event) {
   if (form.elements.source_docker.checked) sources.push("docker");
   if (form.elements.source_unifi.checked) sources.push("unifi");
   if (!sources.length) {
-    toast("Wybierz przynajmniej jedno zrodlo discovery.", "error");
+    toast("Wybierz przynajmniej jedno źródło discovery.", "error");
     return;
   }
-  $("#discoverySummary").textContent = "Skanowanie...";
+  state.discoveryProposals = [];
+  state.discoveryReport = { scanning: true, requestedSources: sources };
+  renderDiscoveryResults();
   $("#runDiscoveryBtn").disabled = true;
   $("#importDiscoveryBtn").disabled = true;
   try {
-    state.discoveryProposals = await api("/api/discovery/scan", {
+    const response = await api("/api/discovery/scan", {
       method: "POST",
       body: JSON.stringify({
         sources,
         network_cidr: form.elements.network_cidr.value.trim() || null,
         timeout_seconds: Number(form.elements.timeout_seconds.value || 3),
         max_hosts: Number(form.elements.max_hosts.value || 64),
+        total_timeout_seconds: Number(form.elements.total_timeout_seconds.value || 60),
       }),
     });
+    state.discoveryProposals = Array.isArray(response) ? response : response.proposals || [];
+    state.discoveryReport = Array.isArray(response)
+      ? { sources: [], summary: { proposals: response.length } }
+      : response;
+    renderDiscoveryResults();
+  } catch (error) {
+    state.discoveryProposals = [];
+    state.discoveryReport = { error: error.message, sources: [], summary: { proposals: 0 } };
     renderDiscoveryResults();
   } finally {
     $("#runDiscoveryBtn").disabled = false;
-    $("#importDiscoveryBtn").disabled = false;
+    updateDiscoveryImportButton();
   }
 }
 
 function renderDiscoveryResults() {
   const root = $("#discoveryResults");
   const summary = $("#discoverySummary");
-  if (!root || !summary) return;
+  const sourceRoot = $("#discoverySourceResults");
+  if (!root || !summary || !sourceRoot) return;
   const proposals = state.discoveryProposals || [];
+  const report = state.discoveryReport;
+  if (report?.scanning) {
+    summary.className = "badge warning";
+    summary.textContent = "Skanowanie…";
+    sourceRoot.innerHTML = report.requestedSources.map((source) => `
+      <div class="discovery-source discovery-source--running">
+        <span class="status-dot warning" aria-hidden="true"></span>
+        <strong>${escapeHtml(discoverySourceLabel(source))}</strong>
+        <span>Skanowanie…</span>
+      </div>
+    `).join("");
+    root.className = "list empty discovery-scanning";
+    root.textContent = "Skan jest w toku. Wyniki pojawią się po zakończeniu źródeł.";
+    return;
+  }
+  renderDiscoverySourceResults(report?.sources || []);
   const duplicates = proposals.filter((item) => item.duplicate_of_monitor_id).length;
-  summary.textContent = proposals.length ? `${proposals.length} propozycji, ${duplicates} duplikatow` : "Brak wynikow";
+  const failed = report?.summary?.failed_sources || 0;
+  const skipped = report?.summary?.skipped_sources || 0;
+  summary.className = `badge ${report?.error || failed ? "bad" : skipped ? "warning" : proposals.length ? "ok" : "unknown"}`;
+  summary.textContent = report?.error
+    ? "Skan nieudany"
+    : proposals.length
+      ? `${proposals.length} propozycji, ${duplicates} duplikatów`
+      : failed
+        ? "Brak wyników — wystąpiły błędy"
+        : skipped
+          ? "0 wyników — źródła pominięte"
+          : "Skan zakończony — 0 wyników";
   if (!proposals.length) {
     root.className = "list empty";
-    root.textContent = "Uruchom skanowanie, aby zobaczyc propozycje.";
+    if (!report) root.textContent = "Uruchom skanowanie, aby zobaczyć propozycje.";
+    else if (report.error) root.textContent = `Nie udało się wykonać skanu: ${report.error}`;
+    else if (failed) root.textContent = "Nie znaleziono propozycji. Sprawdź błędy źródeł powyżej i ponów skan.";
+    else if (skipped) root.textContent = "Wybrane źródła pominięto. Sprawdź wymagania konfiguracyjne powyżej.";
+    else root.textContent = "Skan wykonano poprawnie, ale wybrane źródła nie zwróciły żadnych propozycji.";
+    updateDiscoveryImportButton();
     return;
   }
   root.className = "discovery-results";
@@ -1195,13 +1295,67 @@ function renderDiscoveryResults() {
       <label>Typ<select data-discovery-field="type">${discoveryTypeOptions(proposal.type)}</select></label>
       <label>Target<input data-discovery-field="target" value="${escapeHtml(proposal.target)}" maxlength="2048" /></label>
       <label>Grupa<select data-discovery-field="group_id">${discoveryGroupOptions(proposal.group_id)}</select></label>
-      <small>${escapeHtml(proposal.reason || "")} · confidence ${Math.round(Number(proposal.confidence || 0) * 100)}%</small>
+      <small>${escapeHtml(proposal.reason || "")} · pewność ${Math.round(Number(proposal.confidence || 0) * 100)}%</small>
     </article>
   `).join("");
   $$("[data-discovery-field]", root).forEach((input) => {
     input.addEventListener("input", updateDiscoveryProposalFromInput);
     input.addEventListener("change", updateDiscoveryProposalFromInput);
   });
+  updateDiscoveryImportButton();
+}
+
+function renderDiscoverySourceResults(sources) {
+  const root = $("#discoverySourceResults");
+  root.innerHTML = sources.map((source) => `
+    <div class="discovery-source discovery-source--${escapeHtml(source.status)}">
+      <span class="status-dot ${discoverySourceTone(source.status)}" aria-hidden="true"></span>
+      <strong>${escapeHtml(source.label || discoverySourceLabel(source.source))}</strong>
+      <span class="discovery-source__status">${escapeHtml(discoverySourceStatusLabel(source.status))}</span>
+      <small>${escapeHtml(source.message || "")}</small>
+      <span class="discovery-source__meta">${Number(source.found) || 0} wyników · ${formatDiscoveryDuration(source.duration_ms)}</span>
+    </div>
+  `).join("");
+}
+
+function discoverySourceLabel(source) {
+  return {
+    home_assistant: "Home Assistant",
+    network: "Sieć lokalna",
+    docker: "Docker",
+    unifi: "UniFi / SNMP",
+  }[source] || source;
+}
+
+function discoverySourceStatusLabel(status) {
+  return {
+    success: "Zakończono",
+    empty: "Brak trafień",
+    partial: "Częściowy wynik",
+    skipped: "Pominięto",
+    error: "Błąd",
+  }[status] || "Nieznany";
+}
+
+function discoverySourceTone(status) {
+  if (status === "success") return "ok";
+  if (["partial", "skipped"].includes(status)) return "warning";
+  if (status === "error") return "bad";
+  return "unknown";
+}
+
+function formatDiscoveryDuration(value) {
+  const milliseconds = Number(value);
+  if (!Number.isFinite(milliseconds)) return "—";
+  return milliseconds >= 1000 ? `${(milliseconds / 1000).toFixed(1)} s` : `${milliseconds} ms`;
+}
+
+function updateDiscoveryImportButton() {
+  const importButton = $("#importDiscoveryBtn");
+  if (!importButton) return;
+  importButton.disabled = !(state.discoveryProposals || []).some(
+    (proposal) => proposal.selected !== false && !proposal.duplicate_of_monitor_id,
+  );
 }
 
 function discoveryTypeOptions(current) {
@@ -1225,6 +1379,7 @@ function updateDiscoveryProposalFromInput(event) {
   if (field === "selected") proposal.selected = event.currentTarget.checked;
   else if (field === "group_id") proposal.group_id = event.currentTarget.value ? Number(event.currentTarget.value) : null;
   else proposal[field] = event.currentTarget.value.trim();
+  updateDiscoveryImportButton();
 }
 
 async function importDiscoverySelection() {
@@ -2275,6 +2430,134 @@ function parseDetails(value) {
   }
 }
 
+function renderCredentials() {
+  const root = $("#credentialList");
+  if (!root) return;
+  if (!state.credentials.length) {
+    root.innerHTML = `
+      <div class="credential-empty">
+        <strong>Brak zapisanych danych dostępowych</strong>
+        <p>Dodaj profil, aby bezpiecznie współdzielić login i hasło albo klucz SSH.</p>
+        <button class="primary" type="button" data-credential-action="add">Dodaj dane dostępowe</button>
+      </div>`;
+  } else {
+    root.innerHTML = state.credentials.map((credential) => `
+      <article class="credential-card">
+        <header>
+          <span class="credential-key-icon" aria-hidden="true">⌕</span>
+          <div><h3>${escapeHtml(credential.name)}</h3><p>${escapeHtml(credential.description || "Brak opisu")}</p></div>
+          <span class="badge unknown">${escapeHtml(credentialKindLabel(credential.kind))}</span>
+        </header>
+        <dl>
+          <div><dt>Login</dt><dd>${escapeHtml(credential.username || "—")}</dd></div>
+          <div><dt>Użycie</dt><dd>${credential.in_use_count} ${pluralizeMonitors(credential.in_use_count)}</dd></div>
+          <div><dt>Sekrety</dt><dd>${escapeHtml(credentialSecretSummary(credential))}</dd></div>
+          <div><dt>Aktualizacja</dt><dd>${formatDate(credential.updated_at)}</dd></div>
+        </dl>
+        <footer>
+          <button type="button" data-credential-action="edit" data-id="${credential.id}">Edytuj</button>
+          <button type="button" class="danger-action" data-credential-action="delete" data-id="${credential.id}">Usuń</button>
+        </footer>
+      </article>
+    `).join("");
+  }
+  $$('[data-credential-action]', root).forEach((button) => button.addEventListener("click", handleCredentialAction));
+}
+
+function credentialKindLabel(kind) {
+  return kind === "ssh_private_key" ? "Klucz prywatny SSH" : "Login i hasło";
+}
+
+function credentialSecretSummary(credential) {
+  const values = [];
+  if (credential.has_password) values.push("hasło zapisane");
+  if (credential.has_private_key) values.push("klucz SSH zapisany");
+  if (credential.has_private_key_passphrase) values.push("passphrase zapisane");
+  return values.join(", ") || "brak zapisanych sekretów";
+}
+
+function handleCredentialAction(event) {
+  const action = event.currentTarget.dataset.credentialAction;
+  if (action === "add") return openCredentialForm();
+  const credential = state.credentials.find((item) => item.id === Number(event.currentTarget.dataset.id));
+  if (!credential) return;
+  if (action === "edit") openCredentialForm(credential);
+  if (action === "delete") deleteCredential(credential);
+}
+
+function openCredentialForm(credential = null) {
+  const form = $("#credentialForm");
+  form.reset();
+  form.elements.id.value = credential?.id || "";
+  form.elements.name.value = credential?.name || "";
+  form.elements.kind.value = credential?.kind || "username_password";
+  form.elements.username.value = credential?.username || "";
+  form.elements.description.value = credential?.description || "";
+  $("#credentialDialogTitle").textContent = credential ? "Edytuj dane dostępowe" : "Dodaj dane dostępowe";
+  $("#saveCredentialBtn").textContent = credential ? "Zapisz zmiany" : "Zapisz profil";
+  form.dataset.hasPassword = String(Boolean(credential?.has_password));
+  form.dataset.hasPrivateKey = String(Boolean(credential?.has_private_key));
+  form.dataset.hasPrivateKeyPassphrase = String(Boolean(credential?.has_private_key_passphrase));
+  renderCredentialSecretFields();
+  $("#credentialDialog").showModal();
+}
+
+function renderCredentialSecretFields() {
+  const form = $("#credentialForm");
+  const isKey = form.elements.kind.value === "ssh_private_key";
+  const editing = Boolean(form.elements.id.value);
+  $("#credentialPasswordFields").classList.toggle("hidden", isKey);
+  $("#credentialKeyFields").classList.toggle("hidden", !isKey);
+  $("#clearCredentialPassword").classList.toggle("hidden", !editing || form.dataset.hasPassword !== "true");
+  $("#clearCredentialKey").classList.toggle("hidden", !editing || form.dataset.hasPrivateKey !== "true");
+  $("#clearCredentialPassphrase").classList.toggle(
+    "hidden", !editing || form.dataset.hasPrivateKeyPassphrase !== "true",
+  );
+  $("#credentialPasswordHint").textContent = editing && form.dataset.hasPassword === "true"
+    ? "Hasło jest zapisane. Pozostaw puste, aby zachować obecną wartość."
+    : "Hasło jest wymagane przy tworzeniu profilu.";
+  $("#credentialKeyHint").textContent = editing && form.dataset.hasPrivateKey === "true"
+    ? "Klucz SSH jest zapisany. Pozostaw puste, aby zachować obecną wartość."
+    : "Klucz SSH jest wymagany przy tworzeniu profilu.";
+  $("#credentialPassphraseHint").textContent = editing && form.dataset.hasPrivateKeyPassphrase === "true"
+    ? "Passphrase jest zapisane. Pozostaw puste, aby zachować obecną wartość."
+    : "Opcjonalne hasło do klucza prywatnego.";
+}
+
+async function saveCredential(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const id = form.elements.id.value;
+  const payload = {
+    name: form.elements.name.value.trim(),
+    kind: form.elements.kind.value,
+    username: form.elements.username.value.trim() || null,
+    description: form.elements.description.value.trim() || null,
+    password: form.elements.password.value,
+    private_key: form.elements.private_key.value,
+    private_key_passphrase: form.elements.private_key_passphrase.value,
+    clear_secret_fields: [
+      form.elements.clear_password.checked ? "password" : "",
+      form.elements.clear_private_key.checked ? "private_key" : "",
+      form.elements.clear_private_key_passphrase.checked ? "private_key_passphrase" : "",
+    ].filter(Boolean),
+  };
+  await api(id ? `/api/credentials/${id}` : "/api/credentials", {
+    method: id ? "PUT" : "POST",
+    body: JSON.stringify(payload),
+  });
+  $("#credentialDialog").close();
+  toast(id ? "Dane dostępowe zaktualizowane." : "Dane dostępowe zapisane.");
+  await refreshAll();
+}
+
+async function deleteCredential(credential) {
+  if (!confirm(`Usunąć profil „${credential.name}”?`)) return;
+  await api(`/api/credentials/${credential.id}`, { method: "DELETE" });
+  toast("Profil danych dostępowych usunięty.");
+  await refreshAll();
+}
+
 function renderGroups() {
   const root = $("#groupList");
   renderGroupSummary();
@@ -2660,6 +2943,7 @@ function openMonitorForm(monitor) {
   form.elements.name.value = monitor.name || "";
   form.elements.target.value = monitor.target || "";
   form.elements.group_id.value = monitor.group_id || "";
+  form.elements.credential_id.value = monitor.credential_id || "";
   form.elements.interval_seconds.value = getMonitorFormInterval(monitor);
   form.elements.enabled.checked = monitor.enabled !== false;
   form.elements.test_on_save.checked = !monitor.id;
@@ -2681,10 +2965,14 @@ function openMonitorForm(monitor) {
   form.elements.mqtt_port.value = monitor.config?.port || "";
   form.elements.topic.value = monitor.config?.topic || "";
   form.elements.topic_timeout_seconds.value = monitor.config?.topic_timeout_seconds || "";
+  form.elements.mqtt_username.value = monitor.config?.username || "";
+  form.elements.mqtt_password.value = "";
   populateExtendedMonitorFields(form, monitor.config || {});
   renderTestResult(null);
   $("#dialogTitle").textContent = monitor.id ? "Edytuj monitor" : "Dodaj monitor";
   renderTypeFields(form.elements.type.value);
+  form.elements.credential_id.value = monitor.credential_id || "";
+  renderSelectedMonitorCredential();
   updateConfigPreview();
   $("#monitorDialog").showModal();
 }
@@ -2817,6 +3105,7 @@ function buildMonitorPayload(form) {
     target: form.elements.target.value.trim(),
     interval_seconds: form.elements.interval_seconds.value ? Number(form.elements.interval_seconds.value) : null,
     group_id: form.elements.group_id.value ? Number(form.elements.group_id.value) : null,
+    credential_id: form.elements.credential_id.value ? Number(form.elements.credential_id.value) : null,
     enabled: form.elements.enabled.checked,
     test_on_save: form.elements.test_on_save.checked,
     config,
@@ -3038,11 +3327,31 @@ async function saveSettings(event) {
 function exportConfig() {
   const data = {
     exported_at: new Date().toISOString(),
+    secrets_exported: false,
+    credential_profiles: state.credentials.map((credential) => ({
+      id: credential.id,
+      name: credential.name,
+      kind: credential.kind,
+      username: credential.username,
+      description: credential.description,
+      secrets_exported: false,
+    })),
     settings: state.settings,
     groups: state.groups.map(({ id, created_at, updated_at, status, monitor_count, online, offline, slo, maintenance_active, ...group }) => group),
-    monitors: state.monitors.map(({ id, created_at, updated_at, ...monitor }) => monitor),
+    monitors: state.monitors.map(({ id, created_at, updated_at, credential, ...monitor }) => ({
+      ...monitor,
+      config: withoutMaskedSecrets(monitor.config || {}),
+    })),
   };
   $("#exportBox").value = JSON.stringify(data, null, 2);
+}
+
+function withoutMaskedSecrets(value) {
+  if (Array.isArray(value)) return value.map(withoutMaskedSecrets);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(Object.entries(value)
+    .filter(([, item]) => item !== "********")
+    .map(([key, item]) => [key, withoutMaskedSecrets(item)]));
 }
 
 async function importConfig(event) {
@@ -3062,13 +3371,15 @@ async function importConfig(event) {
     const mappedGroupId = monitor.group_name ? importedGroups[monitor.group_name] : monitor.group_id;
     return { ...monitor, group_id: mappedGroupId || null, test_on_save: false };
   });
+  let importWarnings = [];
   if (monitors.length) {
-    await api("/api/monitors/import", {
+    const result = await api("/api/monitors/import", {
       method: "POST",
       body: JSON.stringify({ monitors }),
     });
+    importWarnings = result.warnings || [];
   }
-  toast("Import zakończony.");
+  toast(importWarnings.length ? `Import zakończony z ostrzeżeniami: ${importWarnings.join("; ")}` : "Import zakończony.");
   refreshAll();
   event.target.value = "";
 }

@@ -4,6 +4,7 @@ import asyncio
 import ipaddress
 import platform
 import re
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -14,6 +15,12 @@ from .monitor_types.ssh_common import run_ssh_command
 DISCOVERY_ENTITY_DOMAINS = {"binary_sensor", "sensor", "device_tracker", "switch", "light", "update"}
 NETWORK_PORTS = [22, 53, 80, 443, 8123, 1883, 8080, 8443]
 NETWORK_CONCURRENCY = 32
+SOURCE_LABELS = {
+    "home_assistant": "Home Assistant",
+    "network": "Sieć lokalna",
+    "docker": "Docker",
+    "unifi": "UniFi / SNMP",
+}
 
 
 @dataclass
@@ -38,6 +45,17 @@ class DiscoveryProposal:
         }
 
 
+@dataclass
+class DiscoverySourceBatch:
+    proposals: list[DiscoveryProposal]
+    status: str | None = None
+    message: str | None = None
+
+
+class DiscoverySourceSkipped(Exception):
+    """Raised when a selected source cannot run without additional configuration."""
+
+
 class DiscoveryService:
     def __init__(self, ha: HomeAssistantClient) -> None:
         self.ha = ha
@@ -46,31 +64,113 @@ class DiscoveryService:
         self,
         payload: dict[str, Any],
         existing_monitors: list[dict[str, Any]],
-    ) -> list[dict[str, Any]]:
+    ) -> dict[str, Any]:
         sources = payload.get("sources") or []
         timeout = float(payload.get("timeout_seconds") or 3)
         max_hosts = int(payload.get("max_hosts") or 64)
-        tasks = []
+        total_timeout = float(payload.get("total_timeout_seconds") or 60)
+        tasks: list[asyncio.Task[tuple[list[DiscoveryProposal], dict[str, Any]]]] = []
         if "home_assistant" in sources:
-            tasks.append(self._scan_home_assistant(timeout))
+            tasks.append(
+                asyncio.create_task(
+                    self._run_source("home_assistant", self._scan_home_assistant(timeout), total_timeout)
+                )
+            )
         if "network" in sources:
-            tasks.append(self._scan_network(str(payload.get("network_cidr") or ""), timeout, max_hosts))
+            tasks.append(
+                asyncio.create_task(
+                    self._run_source(
+                        "network",
+                        self._scan_network(str(payload.get("network_cidr") or ""), timeout, max_hosts),
+                        total_timeout,
+                    )
+                )
+            )
         if "docker" in sources:
-            tasks.append(self._scan_docker(existing_monitors, timeout))
+            tasks.append(
+                asyncio.create_task(
+                    self._run_source("docker", self._scan_docker(existing_monitors, timeout), total_timeout)
+                )
+            )
         if "unifi" in sources:
-            tasks.append(self._scan_unifi(existing_monitors))
+            tasks.append(
+                asyncio.create_task(self._run_source("unifi", self._scan_unifi(existing_monitors), total_timeout))
+            )
         if not tasks:
-            return []
+            return self._scan_response([], [])
 
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        results = await asyncio.gather(*tasks)
         proposals: list[DiscoveryProposal] = []
-        for result in results:
-            if not isinstance(result, list):
-                continue
+        source_results: list[dict[str, Any]] = []
+        for result, source_result in results:
             proposals.extend(result)
-        return [proposal.as_dict() for proposal in self._deduplicate_proposals(proposals, existing_monitors)]
+            source_results.append(source_result)
+        deduplicated = self._deduplicate_proposals(proposals, existing_monitors)
+        return self._scan_response(deduplicated, source_results)
+
+    async def _run_source(
+        self,
+        source: str,
+        scan: Any,
+        total_timeout: float,
+    ) -> tuple[list[DiscoveryProposal], dict[str, Any]]:
+        started = time.perf_counter()
+        proposals: list[DiscoveryProposal] = []
+        status = "empty"
+        message = "Skan zakończony poprawnie, ale nie znaleziono nowych kandydatów."
+        try:
+            result = await asyncio.wait_for(scan, timeout=total_timeout)
+            if isinstance(result, DiscoverySourceBatch):
+                proposals = result.proposals
+                status = result.status or ("success" if proposals else "empty")
+                message = result.message or message
+            else:
+                proposals = result
+                if proposals:
+                    status = "success"
+                    message = f"Znaleziono {len(proposals)} kandydatów."
+        except DiscoverySourceSkipped as exc:
+            status = "skipped"
+            message = str(exc)
+        except TimeoutError:
+            status = "error"
+            message = f"Źródło przekroczyło limit czasu {total_timeout:g} s."
+        except Exception as exc:
+            status = "error"
+            message = _source_error_message(exc)
+        duration_ms = round((time.perf_counter() - started) * 1000)
+        return proposals, {
+            "source": source,
+            "label": SOURCE_LABELS[source],
+            "status": status,
+            "found": len(proposals),
+            "duration_ms": duration_ms,
+            "message": message,
+        }
+
+    @staticmethod
+    def _scan_response(
+        proposals: list[DiscoveryProposal],
+        sources: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        serialized = [proposal.as_dict() for proposal in proposals]
+        failed = sum(source["status"] == "error" for source in sources)
+        skipped = sum(source["status"] == "skipped" for source in sources)
+        return {
+            "proposals": serialized,
+            "sources": sources,
+            "summary": {
+                "selected_sources": len(sources),
+                "completed_sources": len(sources) - failed - skipped,
+                "failed_sources": failed,
+                "skipped_sources": skipped,
+                "proposals": len(serialized),
+            },
+        }
 
     async def _scan_home_assistant(self, timeout: float) -> list[DiscoveryProposal]:
+        if getattr(self.ha, "available", True) is False:
+            raise DiscoverySourceSkipped("Brak połączenia z Home Assistant: SUPERVISOR_TOKEN nie jest dostępny.")
         states = await asyncio.wait_for(self.ha.list_states(timeout=timeout), timeout=timeout + 1)
         proposals: list[DiscoveryProposal] = []
         for state in states:
@@ -92,19 +192,40 @@ class DiscoveryService:
             )
         return proposals
 
-    async def _scan_network(self, cidr: str, timeout: float, max_hosts: int) -> list[DiscoveryProposal]:
+    async def _scan_network(
+        self,
+        cidr: str,
+        timeout: float,
+        max_hosts: int,
+    ) -> DiscoverySourceBatch:
+        if not cidr:
+            raise ValueError("Podaj zakres sieci w formacie CIDR, np. 192.168.1.0/24.")
+        try:
+            ipaddress.ip_network(cidr, strict=False)
+        except ValueError as exc:
+            raise ValueError(f"Nieprawidłowy zakres CIDR: {cidr}.") from exc
         hosts = _hosts_from_cidr(cidr, max_hosts)
         if not hosts:
-            return []
+            return DiscoverySourceBatch([])
         semaphore = asyncio.Semaphore(NETWORK_CONCURRENCY)
         tasks = [self._scan_network_host(str(host), timeout, semaphore) for host in hosts]
         results = await asyncio.gather(*tasks, return_exceptions=True)
         proposals: list[DiscoveryProposal] = []
+        failed_hosts = 0
         for result in results:
             if not isinstance(result, list):
+                failed_hosts += 1
                 continue
             proposals.extend(result)
-        return proposals
+        if failed_hosts == len(hosts):
+            raise RuntimeError("Nie udało się przeskanować żadnego hosta w podanym zakresie sieci.")
+        if failed_hosts:
+            return DiscoverySourceBatch(
+                proposals,
+                status="partial",
+                message=f"Skan zakończono częściowo; błędy wystąpiły dla {failed_hosts} hostów.",
+            )
+        return DiscoverySourceBatch(proposals)
 
     async def _scan_network_host(
         self,
@@ -132,9 +253,14 @@ class DiscoveryService:
             proposals.append(_port_proposal(host, port))
         return proposals
 
-    async def _scan_docker(self, existing_monitors: list[dict[str, Any]], timeout: float) -> list[DiscoveryProposal]:
+    async def _scan_docker(
+        self,
+        existing_monitors: list[dict[str, Any]],
+        timeout: float,
+    ) -> DiscoverySourceBatch:
         proposals: list[DiscoveryProposal] = []
         seen_hosts: set[str] = set()
+        failed_hosts: list[str] = []
         for monitor in existing_monitors:
             if monitor["type"] not in {
                 "docker_container",
@@ -154,7 +280,11 @@ class DiscoveryService:
                     run_ssh_command(config, "docker ps --format '{{.Names}}|{{.Status}}'"),
                     timeout=timeout,
                 )
+                if result.exit_code not in {None, 0}:
+                    failed_hosts.append(host)
+                    continue
             except Exception:
+                failed_hosts.append(host)
                 continue
             for line in str(result.stdout or "").splitlines():
                 name = line.split("|", 1)[0].strip()
@@ -186,7 +316,19 @@ class DiscoveryService:
                         reason=f"Kontener {name} moze miec healthcheck Dockera.",
                     )
                 )
-        return proposals
+        if not seen_hosts:
+            raise DiscoverySourceSkipped(
+                "Brak skonfigurowanego monitora Docker/Linux/SSH, z którego można pobrać listę kontenerów."
+            )
+        if failed_hosts and not proposals:
+            raise RuntimeError(f"Nie udało się połączyć z hostami Docker: {', '.join(failed_hosts)}.")
+        if failed_hosts:
+            return DiscoverySourceBatch(
+                proposals,
+                status="partial",
+                message=f"Wykryto kontenery, ale nie udało się przeskanować: {', '.join(failed_hosts)}.",
+            )
+        return DiscoverySourceBatch(proposals)
 
     async def _scan_unifi(self, existing_monitors: list[dict[str, Any]]) -> list[DiscoveryProposal]:
         proposals: list[DiscoveryProposal] = []
@@ -210,6 +352,10 @@ class DiscoveryService:
                     confidence=0.65,
                     reason="Istniejaca konfiguracja UniFi/SNMP wskazuje urzadzenie sieciowe do monitorowania.",
                 )
+            )
+        if not proposals:
+            raise DiscoverySourceSkipped(
+                "Brak istniejącej konfiguracji UniFi/SNMP, na podstawie której można wykryć urządzenia."
             )
         return proposals
 
@@ -269,6 +415,12 @@ async def _ping_host(host: str, timeout: float) -> bool:
             stderr=asyncio.subprocess.DEVNULL,
         )
         return await asyncio.wait_for(process.wait(), timeout=timeout + 1) == 0
+    except FileNotFoundError as exc:
+        raise RuntimeError("Narzędzie systemowe ping nie jest dostępne.") from exc
+    except TimeoutError:
+        return False
+    except OSError as exc:
+        raise RuntimeError(f"Nie udało się uruchomić ping: {exc}") from exc
     except Exception:
         return False
 
@@ -350,3 +502,10 @@ def _proposal_key(monitor_type: str, target: str, config: dict[str, Any]) -> tup
     if monitor_type in {"docker_container", "docker_healthcheck", "docker_compose_service"}:
         entity = f"{host}:{config.get('container_name') or config.get('service_name') or target}".lower()
     return monitor_type, re.sub(r"/+$", "", entity)
+
+
+def _source_error_message(exc: Exception) -> str:
+    detail = re.sub(r"\s+", " ", str(exc)).strip()
+    if not detail:
+        detail = exc.__class__.__name__
+    return f"Skan źródła zakończył się błędem: {detail[:300]}"

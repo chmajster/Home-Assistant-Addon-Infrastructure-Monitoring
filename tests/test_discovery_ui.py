@@ -1,0 +1,66 @@
+from pathlib import Path
+
+ROOT = Path(__file__).parents[1]
+STATIC = ROOT / "monitoring_center" / "static"
+APP = (STATIC / "app.js").read_text(encoding="utf-8")
+HTML = (STATIC / "index.html").read_text(encoding="utf-8")
+CSS = (STATIC / "styles.css").read_text(encoding="utf-8")
+STATE = (STATIC / "state.js").read_text(encoding="utf-8")
+
+
+def _function_source(name: str, next_name: str) -> str:
+    return APP.split(f"function {name}", 1)[1].split(f"function {next_name}", 1)[0]
+
+
+def test_discovery_ui_sends_source_and_total_timeouts() -> None:
+    scan = APP.split("async function runDiscoveryScan", 1)[1].split("function renderDiscoveryResults", 1)[0]
+    assert "timeout_seconds:" in scan
+    assert "total_timeout_seconds:" in scan
+    assert "network_cidr:" in scan
+    assert "max_hosts:" in scan
+    assert "state.discoveryReport = { scanning: true" in scan
+
+
+def test_discovery_ui_handles_structured_and_legacy_responses() -> None:
+    scan = APP.split("async function runDiscoveryScan", 1)[1].split("function renderDiscoveryResults", 1)[0]
+    assert "Array.isArray(response)" in scan
+    assert "response.proposals || []" in scan
+    assert "discoveryReport: null" in STATE
+    assert "catch (error)" in scan
+    assert "Skan nieudany" in APP
+
+
+def test_discovery_ui_renders_every_source_status_and_message_safely() -> None:
+    source_render = _function_source("renderDiscoverySourceResults(sources)", "discoverySourceLabel(source)")
+    labels = _function_source("discoverySourceStatusLabel(status)", "discoverySourceTone(status)")
+    assert "sources.map" in source_render
+    assert "escapeHtml(source.message" in source_render
+    assert "source.duration_ms" in source_render
+    for status in ("success", "empty", "partial", "skipped", "error"):
+        assert status in labels
+
+
+def test_discovery_ui_distinguishes_no_scan_empty_success_and_failure() -> None:
+    render = _function_source("renderDiscoveryResults()", "renderDiscoverySourceResults(sources)")
+    assert "Uruchom skanowanie" in render
+    assert "Skan wykonano poprawnie" in render
+    assert "Sprawdź błędy źródeł" in render
+    assert "Skanowanie…" in render
+    assert "summary.className = `badge" in render
+
+
+def test_discovery_dialog_exposes_accessible_source_results() -> None:
+    assert 'id="discoverySourceResults"' in HTML
+    assert 'id="discoveryResults" class="list empty" aria-live="polite"' in HTML
+    assert 'name="total_timeout_seconds"' in HTML
+    assert ".discovery-source--success" in CSS
+    assert ".discovery-source--error" in CSS
+    assert ".discovery-source--skipped" in CSS
+
+
+def test_discovery_import_is_disabled_without_selectable_proposals() -> None:
+    button_update = _function_source("updateDiscoveryImportButton()", "discoveryTypeOptions(current)")
+    input_update = _function_source("updateDiscoveryProposalFromInput(event)", "importDiscoverySelection()")
+    assert "importButton.disabled" in button_update
+    assert "!proposal.duplicate_of_monitor_id" in button_update
+    assert "updateDiscoveryImportButton()" in input_update
