@@ -3,6 +3,7 @@ import { state } from "./state.js";
 import { $, $$, debounce } from "./utils.js";
 import { activateView } from "./router.js";
 import { installDialogAccessibility } from "./components/dialogs.js";
+import { groupStatusLabel, incidentCountLabel, sloUptimeLabel } from "./components/groups.js";
 
 const URL_MONITOR_TYPES = ["http_status", "http_hash", "rest_api"];
 const MONITOR_TYPE_CATEGORIES = {
@@ -95,6 +96,15 @@ function bindForms() {
   $("#closeDiscoveryBtn")?.addEventListener("click", () => $("#discoveryDialog").close());
   $("#importDiscoveryBtn")?.addEventListener("click", importDiscoverySelection);
   $("#groupForm").addEventListener("submit", saveGroup);
+  $("#cancelGroupEditBtn").addEventListener("click", resetGroupForm);
+  $("#groupForm").elements.color.addEventListener("input", syncGroupColorFromPicker);
+  $("#groupForm").elements.color_hex.addEventListener("input", syncGroupColorFromHex);
+  $("#groupMaintenanceForm").addEventListener("submit", saveGroupMaintenanceFromDialog);
+  $("#openGroupMonitoringBtn").addEventListener("click", openSelectedGroupInMonitoring);
+  document.addEventListener("click", (event) => {
+    if (event.target instanceof Element && event.target.closest(".group-action-menu")) return;
+    $$(".group-action-menu", $("#groupList")).forEach((menu) => menu.removeAttribute("open"));
+  });
   $("#monitorTypeSelect").addEventListener("change", () => renderTypeFields($("#monitorTypeSelect").value));
   $("#monitorForm").addEventListener("input", updateConfigPreview);
   $("#monitorForm").addEventListener("change", updateConfigPreview);
@@ -2267,45 +2277,85 @@ function parseDetails(value) {
 
 function renderGroups() {
   const root = $("#groupList");
+  renderGroupSummary();
+  if (state.selectedGroupId && !state.groups.some((group) => group.id === state.selectedGroupId)) {
+    state.selectedGroupId = null;
+  }
   if (!state.groups.length) {
-    root.innerHTML = '<p class="empty">Brak grup.</p>';
+    root.innerHTML = '<div class="group-empty-state"><strong>Brak grup</strong><p>Dodaj pierwszą grupę, aby uporządkować monitory.</p></div>';
+    renderGroupMonitorList();
     return;
   }
   root.innerHTML = state.groups.map((group) => `
-    <article class="card">
-      <div class="card-head">
-        <div>
-          <h2><span class="swatch" style="background:${escapeHtml(group.color)}"></span>${escapeHtml(group.name)}</h2>
-          <p>${escapeHtml(group.description || "")}</p>
+    <article class="group-card${state.selectedGroupId === group.id ? " group-card--selected" : ""}"
+      style="--group-color: ${normalizeGroupColor(group.color)}" data-group-id="${group.id}">
+      <header class="group-card__header">
+        <span class="group-color-dot" aria-hidden="true"></span>
+        <div class="group-card__identity">
+          <h3>${escapeHtml(group.name)}</h3>
+          <p>${escapeHtml(group.description || "Brak opisu")}</p>
         </div>
-        <span class="badge ${badgeClass(group.status)}">${escapeHtml(group.status)}</span>
+        <span class="group-status badge ${badgeClass(group.maintenance_active ? "maintenance" : group.status)}">${groupStatusLabel(group.maintenance_active ? "maintenance" : group.status)}</span>
+      </header>
+      <div class="group-card__stats" aria-label="Statystyki grupy">
+        ${renderGroupStat("Monitory", group.monitor_count, "neutral")}
+        ${renderGroupStat("Online", group.online, "ok")}
+        ${renderGroupStat("Offline", group.offline, Number(group.monitor_count) ? "bad" : "neutral")}
       </div>
-      <div class="meta">
-        <span>Monitory: ${group.monitor_count}</span>
-        <span>Online: ${group.online}</span>
-        <span>Offline: ${group.offline}</span>
-        <span>Maintenance: ${group.maintenance_active ? "aktywny do " + formatDate(group.maintenance_until) : "-"}</span>
-      </div>
-      <div class="slo-mini">${renderSloMini(group.slo || {})}</div>
-      <div class="actions">
-        <button data-group-action="filter" data-id="${group.id}">Pokaż monitory</button>
+      ${renderGroupMaintenance(group)}
+      <div class="group-card__slo" aria-label="SLO grupy">${renderSloMini(group.slo || {})}</div>
+      <footer class="group-card__actions">
+        <button class="primary group-show-monitors" data-group-action="filter" data-id="${group.id}">Pokaż monitory</button>
         <button data-group-action="edit" data-id="${group.id}">Edytuj</button>
-        <button data-group-action="maint-30" data-id="${group.id}">Serwis 30m</button>
-        <button data-group-action="maint-120" data-id="${group.id}">Serwis 2h</button>
-        <button data-group-action="maint-manual" data-id="${group.id}">Serwis ręczny</button>
-        ${group.maintenance_active ? `<button data-group-action="maint-clear" data-id="${group.id}">Wyłącz serwis</button>` : ""}
-        <button data-group-action="delete" data-id="${group.id}">Usuń</button>
-      </div>
+        <details class="group-action-menu">
+          <summary aria-label="Opcje trybu serwisowego" aria-expanded="false">Serwis</summary>
+          <div class="group-action-menu__popover">
+            <button data-group-action="maint-30" data-id="${group.id}">30 minut</button>
+            <button data-group-action="maint-120" data-id="${group.id}">2 godziny</button>
+            <button data-group-action="maint-manual" data-id="${group.id}">Ustaw ręcznie</button>
+            ${group.maintenance_active ? `<button data-group-action="maint-clear" data-id="${group.id}">Wyłącz tryb serwisowy</button>` : ""}
+          </div>
+        </details>
+        <details class="group-action-menu group-action-menu--more">
+          <summary aria-label="Więcej akcji" aria-expanded="false">•••</summary>
+          <div class="group-action-menu__popover"><button class="danger-action" data-group-action="delete" data-id="${group.id}">Usuń</button></div>
+        </details>
+      </footer>
     </article>
   `).join("");
   $$("[data-group-action]", root).forEach((button) => button.addEventListener("click", handleGroupAction));
+  $$(".group-action-menu", root).forEach(bindGroupActionMenu);
   renderGroupMonitorList();
 }
 
+function renderGroupSummary() {
+  const assignedActive = state.monitors.filter((monitor) => monitor.enabled !== false && monitor.group_id).length;
+  const maintenanceGroups = state.groups.filter((group) => group.maintenance_active).length;
+  $("#groupSummary").innerHTML = [
+    ["Grupy", state.groups.length],
+    ["Aktywne monitory", assignedActive],
+    ["Grupy w serwisie", maintenanceGroups],
+  ].map(([label, value]) => `<div><dt>${label}</dt><dd>${value}</dd></div>`).join("");
+}
+
+function renderGroupStat(label, value, tone) {
+  return `<div class="group-stat group-stat--${tone}"><span>${label}</span><strong>${Number(value) || 0}</strong></div>`;
+}
+
+function renderGroupMaintenance(group) {
+  if (!group.maintenance_active) {
+    return '<div class="group-maintenance"><span class="status-dot" aria-hidden="true"></span><span>Tryb serwisowy wyłączony</span></div>';
+  }
+  const until = String(group.maintenance_until || "").startsWith("9999-")
+    ? "bez terminu zakończenia"
+    : `do ${formatDate(group.maintenance_until)}`;
+  return `<div class="group-maintenance group-maintenance--active"><span class="status-dot warning" aria-hidden="true"></span><span><strong>Tryb serwisowy aktywny</strong><small>${escapeHtml(until)}</small></span></div>`;
+}
+
 function renderSloMini(slo) {
-  return ["24h", "7d", "30d", "90d"].map((key) => {
+  return [["24h", "24 h"], ["7d", "7 dni"], ["30d", "30 dni"], ["90d", "90 dni"]].map(([key, label]) => {
     const item = slo[key] || {};
-    return `<span><strong>${key}</strong> ${item.uptime_percent ?? "-"}% · ${item.incidents ?? 0} inc.</span>`;
+    return `<div class="group-slo-item"><span>${label}</span><strong>${sloUptimeLabel(item.uptime_percent)}</strong><small>${incidentCountLabel(item.incidents)}</small></div>`;
   }).join("");
 }
 
@@ -2313,23 +2363,88 @@ async function handleGroupAction(event) {
   const id = Number(event.currentTarget.dataset.id);
   const action = event.currentTarget.dataset.groupAction;
   const group = state.groups.find((item) => item.id === id);
+  event.currentTarget.closest("details")?.removeAttribute("open");
+  if (!group) return;
+  if (action === "filter") selectGroup(id);
   if (action === "edit") {
     const form = $("#groupForm");
     form.elements.id.value = group.id;
     form.elements.name.value = group.name;
     form.elements.description.value = group.description || "";
-    form.elements.color.value = group.color || "#0f766e";
-    document.querySelector("#groups").scrollIntoView({ behavior: "smooth" });
+    form.elements.color.value = normalizeGroupColor(group.color);
+    form.elements.color_hex.value = normalizeGroupColor(group.color);
+    $("#groupFormTitle").textContent = "Edytuj grupę";
+    $("#groupFormHint").textContent = `Zmieniasz ustawienia grupy „${group.name}”.`;
+    $("#saveGroupBtn").textContent = "Zapisz zmiany";
+    $("#cancelGroupEditBtn").hidden = false;
+    $(".group-form-panel").scrollIntoView({ behavior: prefersReducedMotion() ? "auto" : "smooth", block: "start" });
+    form.elements.name.focus({ preventScroll: true });
   }
   if (action === "maint-30") await setGroupMaintenance(id, 30);
   if (action === "maint-120") await setGroupMaintenance(id, 120);
-  if (action === "maint-manual") await setGroupMaintenance(id, null);
+  if (action === "maint-manual") openGroupMaintenanceDialog(group);
   if (action === "maint-clear") await clearGroupMaintenance(id);
-  if (action === "delete" && confirm(`Usunąć grupę "${group.name}"? Monitory zostaną bez grupy.`)) {
+  if (action === "delete" && await confirmGroupDelete(group)) {
     await api(`/api/groups/${id}`, { method: "DELETE" });
     toast("Grupa usunięta.");
-    refreshAll();
+    if (state.selectedGroupId === id) state.selectedGroupId = null;
+    await refreshAll();
   }
+}
+
+function selectGroup(id, { scroll = true } = {}) {
+  state.selectedGroupId = Number(id);
+  state.monitorGroupFilter = String(id);
+  if ($("#monitorGroupFilter")) $("#monitorGroupFilter").value = String(id);
+  persistMonitorUiState();
+  $$(".group-card", $("#groupList")).forEach((card) => {
+    card.classList.toggle("group-card--selected", Number(card.dataset.groupId) === Number(id));
+  });
+  renderGroupMonitorList(id);
+  if (scroll && window.matchMedia("(max-width: 699px)").matches) {
+    $("#groupMonitorsPanel").scrollIntoView({ behavior: prefersReducedMotion() ? "auto" : "smooth", block: "start" });
+  }
+}
+
+function resetGroupForm() {
+  const form = $("#groupForm");
+  form.reset();
+  form.elements.id.value = "";
+  form.elements.color.value = "#0f766e";
+  form.elements.color_hex.value = "#0f766e";
+  $("#groupFormTitle").textContent = "Nowa grupa";
+  $("#groupFormHint").textContent = "Utwórz logiczny obszar dla powiązanych monitorów.";
+  $("#saveGroupBtn").textContent = "Dodaj grupę";
+  $("#cancelGroupEditBtn").hidden = true;
+}
+
+function syncGroupColorFromPicker(event) {
+  event.currentTarget.form.elements.color_hex.value = event.currentTarget.value.toLowerCase();
+}
+
+function syncGroupColorFromHex(event) {
+  if (/^#[0-9a-f]{6}$/i.test(event.currentTarget.value)) {
+    event.currentTarget.form.elements.color.value = event.currentTarget.value;
+  }
+}
+
+function normalizeGroupColor(value) {
+  return /^#[0-9a-f]{6}$/i.test(String(value || "")) ? String(value).toLowerCase() : "#0f766e";
+}
+
+function bindGroupActionMenu(menu) {
+  const summary = menu.querySelector("summary");
+  menu.addEventListener("toggle", () => {
+    summary.setAttribute("aria-expanded", String(menu.open));
+    if (menu.open) $$(".group-action-menu", $("#groupList")).forEach((other) => {
+      if (other !== menu) other.removeAttribute("open");
+    });
+  });
+  menu.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape") return;
+    menu.removeAttribute("open");
+    summary.focus();
+  });
 }
 
 async function saveGroup(event) {
@@ -2345,10 +2460,36 @@ async function saveGroup(event) {
     method: id ? "PUT" : "POST",
     body: JSON.stringify(payload),
   });
+  resetGroupForm();
+  toast(id ? "Zmiany zapisane." : "Grupa dodana.");
+  await refreshAll();
+}
+
+function openGroupMaintenanceDialog(group) {
+  const form = $("#groupMaintenanceForm");
   form.reset();
-  form.elements.color.value = "#0f766e";
-  toast("Grupa zapisana.");
-  refreshAll();
+  form.elements.id.value = group.id;
+  form.elements.until.value = toDatetimeLocalValue(group.maintenance_until) || toDatetimeLocalValue(Date.now() + 3600000);
+  $("#groupMaintenanceDialogTitle").textContent = `Serwis: ${group.name}`;
+  $("#groupMaintenanceDialog").showModal();
+}
+
+async function saveGroupMaintenanceFromDialog(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const id = Number(form.elements.id.value);
+  const until = new Date(form.elements.until.value);
+  if (!id || Number.isNaN(until.getTime()) || until <= new Date()) {
+    toast("Data zakończenia serwisu musi być w przyszłości.", "error");
+    return;
+  }
+  await api(`/api/groups/${id}/maintenance`, {
+    method: "POST",
+    body: JSON.stringify({ until: until.toISOString(), reason: form.elements.reason.value.trim() }),
+  });
+  $("#groupMaintenanceDialog").close();
+  toast("Tryb serwisowy grupy włączony.");
+  await refreshAll();
 }
 
 function openMaintenanceDialog(monitor) {
@@ -2372,13 +2513,6 @@ async function saveMaintenanceFromDialog(event) {
     toast("Podaj datę zakończenia serwisu.", "error");
     return;
   }
-  if (action === "filter") {
-    state.monitorGroupFilter = String(id);
-    if ($("#monitorGroupFilter")) $("#monitorGroupFilter").value = String(id);
-    renderGroupMonitorList(id);
-    showView("monitoring");
-    renderMonitorLists();
-  }
   const until = new Date(untilValue);
   if (Number.isNaN(until.getTime())) {
     toast("Nieprawidłowa data zakończenia serwisu.", "error");
@@ -2392,25 +2526,66 @@ async function saveMaintenanceFromDialog(event) {
   $("#maintenanceDialog").close();
 }
 
-function renderGroupMonitorList(groupId = Number(state.monitorGroupFilter) || null) {
+function renderGroupMonitorList(groupId = state.selectedGroupId) {
   const root = $("#groupMonitorList");
   if (!root) return;
+  const title = $("#groupMonitorsTitle");
+  const count = $("#groupMonitorsCount");
+  const openButton = $("#openGroupMonitoringBtn");
   if (!groupId) {
     root.classList.add("empty");
-    root.innerHTML = "Wybierz grupę kartą lub filtrem.";
+    title.textContent = "Monitory wybranej grupy";
+    count.textContent = "";
+    openButton.hidden = true;
+    root.innerHTML = "Wybierz grupę, aby zobaczyć przypisane monitory.";
     return;
   }
+  const group = state.groups.find((item) => Number(item.id) === Number(groupId));
+  if (!group) return;
   const monitors = state.monitors.filter((monitor) => Number(monitor.group_id) === Number(groupId));
   root.classList.toggle("empty", !monitors.length);
+  title.textContent = `Monitory: ${group.name}`;
+  count.textContent = `${monitors.length} ${pluralizeMonitors(monitors.length)}`;
+  openButton.hidden = false;
   root.innerHTML = monitors.length
     ? monitors.map((monitor) => `
-      <button class="list-item clickable-monitor" data-card-id="${monitor.id}" type="button">
-        <strong>${escapeHtml(monitor.name)}</strong>
-        <small>${escapeHtml(typeLabel(monitor.type))} · ${escapeHtml(monitor.status)} · ${formatResponse(monitor.last_response_ms)}</small>
+      <button class="group-monitor-item clickable-monitor" data-card-id="${monitor.id}" type="button">
+        <span class="status-dot ${badgeClass(monitor.status)}" aria-hidden="true"></span>
+        <span class="group-monitor-item__name"><strong>${escapeHtml(monitor.name)}</strong><small>${escapeHtml(typeLabel(monitor.type))}</small></span>
+        <span class="badge ${badgeClass(monitor.status)}">${groupStatusLabel(monitor.status)}</span>
+        <span class="group-monitor-response">${formatResponse(monitor.last_response_ms)}</span>
       </button>
     `).join("")
-    : "Brak monitorów w tej grupie.";
+    : `<div class="group-monitor-empty"><strong>Ta grupa nie zawiera jeszcze monitorów.</strong><button type="button" data-add-monitor-to-group="${group.id}">Dodaj monitor do grupy</button></div>`;
+  $("[data-add-monitor-to-group]", root)?.addEventListener("click", () => openMonitorForm({ group_id: group.id }));
   bindMonitorOpeners(root);
+}
+
+function openSelectedGroupInMonitoring() {
+  if (!state.selectedGroupId) return;
+  state.monitorGroupFilter = String(state.selectedGroupId);
+  if ($("#monitorGroupFilter")) $("#monitorGroupFilter").value = state.monitorGroupFilter;
+  persistMonitorUiState();
+  renderMonitorLists();
+  showView("monitoring");
+}
+
+function confirmGroupDelete(group) {
+  const dialog = $("#confirmDialog");
+  if (!dialog?.showModal) return Promise.resolve(confirm(`Usunąć grupę "${group.name}"? Monitory zostaną bez grupy.`));
+  $("#confirmTitle").textContent = `Usunąć grupę „${group.name}”?`;
+  $("#confirmText").textContent = "Monitory pozostaną w systemie, ale nie będą już przypisane do tej grupy.";
+  $("#confirmAcceptBtn").textContent = "Usuń grupę";
+  $("#confirmDetails").classList.add("hidden");
+  dialog.returnValue = "";
+  return new Promise((resolve) => {
+    dialog.addEventListener("close", () => resolve(dialog.returnValue === "confirm"), { once: true });
+    dialog.showModal();
+  });
+}
+
+function prefersReducedMotion() {
+  return window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
 }
 
 async function applyMaintenanceDuration(minutes) {
@@ -3263,6 +3438,7 @@ function checkLine(row) {
 }
 
 function badgeClass(status) {
+  if (status === "maintenance") return "warning";
   if (status === "warning") return "warning";
   if (isSuccessStatus(status)) return "ok";
   if (["offline", "error"].includes(status)) return "bad";

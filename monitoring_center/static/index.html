@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Monitoring Center</title>
-    <link rel="stylesheet" href="static/styles.css?v=0.7.7" />
+    <link rel="stylesheet" href="static/styles.css?v=0.12.1" />
   </head>
   <body>
     <svg class="icon-sprite" aria-hidden="true" focusable="false">
@@ -256,25 +256,44 @@
           </section>
 
           <section id="groups" class="view">
-            <div class="view-head">
+            <div class="view-head group-view-head">
               <div>
                 <h2>Grupy</h2>
-                <p>Zarządzanie logicznymi obszarami monitoringu i maintenance mode.</p>
+                <p>Organizuj monitory, kontroluj dostępność i zarządzaj trybem serwisowym.</p>
               </div>
+              <dl id="groupSummary" class="group-summary" aria-label="Podsumowanie grup"></dl>
             </div>
-            <section class="panel">
-              <form id="groupForm" class="grid-form">
+            <section class="panel group-form-panel">
+              <div class="group-form-heading">
+                <h3 id="groupFormTitle">Nowa grupa</h3>
+                <p id="groupFormHint">Utwórz logiczny obszar dla powiązanych monitorów.</p>
+              </div>
+              <form id="groupForm" class="group-form">
                 <input type="hidden" name="id" />
                 <label>Nazwa<input name="name" required maxlength="120" placeholder="Sieć domowa" /></label>
                 <label>Opis<input name="description" maxlength="500" placeholder="Opcjonalny opis" /></label>
-                <label>Kolor<input name="color" type="color" value="#0f766e" /></label>
-                <button class="primary">Zapisz grupę</button>
+                <label class="group-color-field">Kolor
+                  <span class="group-color-controls">
+                    <input name="color" type="color" value="#0f766e" aria-label="Kolor grupy" />
+                    <input name="color_hex" class="group-color-hex" value="#0f766e" maxlength="7" pattern="#[0-9a-fA-F]{6}" aria-label="Kolor grupy w formacie HEX" />
+                  </span>
+                </label>
+                <div class="group-form-actions">
+                  <button id="cancelGroupEditBtn" type="button" hidden>Anuluj edycję</button>
+                  <button id="saveGroupBtn" class="primary">Dodaj grupę</button>
+                </div>
               </form>
             </section>
-            <div id="groupList" class="cards group-grid"></div>
-            <section class="panel">
-              <h3>Monitory wybranej grupy</h3>
-              <div id="groupMonitorList" class="list empty">Wybierz grupę kartą lub filtrem.</div>
+            <div id="groupList" class="group-grid"></div>
+            <section id="groupMonitorsPanel" class="panel group-monitors-panel">
+              <div class="group-monitors-head">
+                <div>
+                  <h3 id="groupMonitorsTitle">Monitory wybranej grupy</h3>
+                  <p id="groupMonitorsCount"></p>
+                </div>
+                <button id="openGroupMonitoringBtn" type="button" hidden>Otwórz w monitoringu</button>
+              </div>
+              <div id="groupMonitorList" class="group-monitor-list empty">Wybierz grupę, aby zobaczyć przypisane monitory.</div>
             </section>
           </section>
 
@@ -765,6 +784,25 @@
       </form>
     </dialog>
 
+    <dialog id="groupMaintenanceDialog">
+      <form id="groupMaintenanceForm">
+        <input type="hidden" name="id" />
+        <div class="drawer-head">
+          <div>
+            <h2 id="groupMaintenanceDialogTitle">Serwis grupy</h2>
+            <p>Ustaw datę zakończenia trybu serwisowego.</p>
+          </div>
+          <button type="button" data-dialog-close="groupMaintenanceDialog" aria-label="Zamknij">×</button>
+        </div>
+        <label>Aktywny do<input name="until" type="datetime-local" required /></label>
+        <label>Powód<textarea name="reason" maxlength="500" rows="3" placeholder="Opcjonalny powód"></textarea></label>
+        <menu>
+          <button type="button" data-dialog-close="groupMaintenanceDialog">Anuluj</button>
+          <button class="primary" value="default">Włącz serwis</button>
+        </menu>
+      </form>
+    </dialog>
+
     <dialog id="snapshotDialog">
       <form method="dialog">
         <h2>Ostatnie zmiany</h2>
@@ -794,6 +832,6 @@
     </dialog>
 
     <div id="toast" role="status" aria-label="Komunikat aplikacji" title="Kliknij, aby zamknąć"></div>
-    <script type="module" src="static/app.js?v=0.12.0"></script>
+    <script type="module" src="static/app.js?v=0.12.1"></script>
   </body>
 </html>
