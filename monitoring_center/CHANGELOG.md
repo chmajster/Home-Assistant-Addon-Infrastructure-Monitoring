@@ -4,6 +4,11 @@ All notable changes to the **Monitoring Center** Home Assistant add-on are docum
 
 ## [Unreleased]
 
+## [0.13.2] - 2026-07-13
+
+- Przywrócono wykrywanie tokenu Supervisor w zmiennej środowiskowej i plikach środowiska S6.
+- Dodano zgodność ze starszą nazwą `HASSIO_TOKEN` dla istniejących instalacji.
+
 ## [0.13.1] - 2026-07-12
 
 - Podniesiono wersję wydania po ostatnich poprawkach.

@@ -13,6 +13,29 @@ from .validators import ensure_public_url_if_required
 
 LOGGER = logging.getLogger(__name__)
 
+SUPERVISOR_TOKEN_FILES = (
+    "/run/s6/container_environment/SUPERVISOR_TOKEN",
+    "/var/run/s6/container_environment/SUPERVISOR_TOKEN",
+)
+
+
+def get_supervisor_token() -> str | None:
+    """Return the Supervisor token across supported HA base-image layouts."""
+    for name in ("SUPERVISOR_TOKEN", "HASSIO_TOKEN"):
+        token = os.environ.get(name, "").strip()
+        if token:
+            return token
+
+    for path in SUPERVISOR_TOKEN_FILES:
+        try:
+            with open(path, encoding="utf-8") as token_file:
+                token = token_file.read().strip().rstrip("\x00")
+        except (OSError, UnicodeError):
+            continue
+        if token:
+            return token
+    return None
+
 
 def slugify(value: str) -> str:
     slug = re.sub(r"[^a-z0-9_]+", "_", value.lower())
@@ -24,7 +47,7 @@ class HomeAssistantClient:
     def __init__(self, config: AppConfig) -> None:
         self.config = config
         self.base_url = "http://supervisor/core/api"
-        self.token = os.environ.get("SUPERVISOR_TOKEN")
+        self.token = get_supervisor_token()
         self._client = httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=5.0), follow_redirects=False)
         self.publish_error_count = 0
         self.last_publish_success_at: str | None = None

@@ -4,9 +4,21 @@ import asyncio
 from pathlib import Path
 
 from monitoring_center.database import Database, dumps_json
-from monitoring_center.ha import HomeAssistantClient
+from monitoring_center.ha import HomeAssistantClient, get_supervisor_token
 from monitoring_center.monitoring import MonitorService
 from monitoring_center.security import MASKED_SECRET
+
+
+def test_supervisor_token_uses_current_environment(monkeypatch: object) -> None:
+    monkeypatch.setenv("SUPERVISOR_TOKEN", " current-token ")  # type: ignore[attr-defined]
+    monkeypatch.setenv("HASSIO_TOKEN", "legacy-token")  # type: ignore[attr-defined]
+    assert get_supervisor_token() == "current-token"
+
+
+def test_supervisor_token_supports_legacy_environment(monkeypatch: object) -> None:
+    monkeypatch.delenv("SUPERVISOR_TOKEN", raising=False)  # type: ignore[attr-defined]
+    monkeypatch.setenv("HASSIO_TOKEN", "legacy-token")  # type: ignore[attr-defined]
+    assert get_supervisor_token() == "legacy-token"
 
 
 def test_plaintext_secrets_are_migrated_and_absent_from_database_and_backup(

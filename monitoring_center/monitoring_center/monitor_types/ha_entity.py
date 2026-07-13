@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-import os
 import time
 from typing import Any
 
 import httpx
 
 from ..config import AppConfig
+from ..ha import get_supervisor_token
 from .base import CheckResult, MonitorContext, normalize_timeout_config, timeout_seconds_from_config
 
 
@@ -26,7 +26,7 @@ class HomeAssistantEntityMonitor:
         return entity_id, config
 
     async def check(self, monitor: dict[str, Any], context: MonitorContext) -> CheckResult:
-        token = os.environ.get("SUPERVISOR_TOKEN")
+        token = get_supervisor_token()
         if not token:
             return CheckResult("error", error="SUPERVISOR_TOKEN is not available")
         timeout = timeout_seconds_from_config(monitor["config"], context.config.default_timeout_minutes * 60)
