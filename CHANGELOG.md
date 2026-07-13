@@ -6,6 +6,11 @@ Format opiera się na konwencji Keep a Changelog, a wersjonowanie dodatku powinn
 
 ## [Unreleased]
 
+## [0.13.5] - 2026-07-13
+
+- Dodano testowanie niezapisanych propozycji discovery bezpośrednio z wyniku skanu.
+- Dodano izolowany podgląd wykrytych stron HTTP oraz rozpoznawanie SSH przez odczyt bannera protokołu.
+
 ## [0.13.4] - 2026-07-13
 
 - Dodano lokalne rozpoznawanie hostów discovery przez reverse DNS, MAC, popularne prefiksy producentów i otwarte porty.

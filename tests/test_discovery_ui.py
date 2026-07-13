@@ -88,3 +88,16 @@ def test_discovery_results_show_device_identity_and_icon() -> None:
     assert "discoveryIdentityText(proposal)" in render
     assert "discoveryDeviceKindLabel(proposal.device_kind)" in render
     assert ".discovery-identity" in CSS
+
+
+def test_discovery_result_has_live_test_action_and_safe_http_preview() -> None:
+    render = _function_source("renderDiscoveryResults()", "startDiscoveryTestRun(proposal)")
+    test_run = _function_source("startDiscoveryTestRun(proposal)", "discoveryProposalMatches(proposal, query)")
+    preview = _function_source("renderDiscoveryHttpPreview(test, result)", "definitionRows(rows)")
+    assert "data-discovery-test" in render
+    assert 'api("/api/monitors/test"' in test_run
+    assert 'returnView: "discovery"' in test_run
+    assert 'sandbox=""' in preview
+    assert 'rel="noopener noreferrer"' in preview
+    assert '["http:", "https:"]' in preview
+    assert ".discovery-http-preview iframe" in CSS

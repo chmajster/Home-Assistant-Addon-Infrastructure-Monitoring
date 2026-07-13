@@ -507,6 +507,16 @@ def _port_proposal(
         "device_kind": device_kind,
         "icon": icon,
     }
+    if port == 22:
+        return DiscoveryProposal(
+            name=f"SSH {label}",
+            type="tcp_port",
+            target=f"{host}:22",
+            config={"host": host, "port": 22},
+            confidence=0.85,
+            reason="Port SSH 22 jest otwarty; test na żywo zweryfikuje banner protokołu.",
+            **identity,
+        )
     if port in {80, 443, 8080, 8443, 8123}:
         scheme = "https" if port in {443, 8443} else "http"
         target = f"{scheme}://{host}" if port in {80, 443} else f"{scheme}://{host}:{port}"

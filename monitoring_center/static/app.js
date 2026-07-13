@@ -57,6 +57,7 @@ function bindNavigation() {
   $("#testBackBtn").addEventListener("click", backFromMonitorTest);
   $("#testRepeatBtn").addEventListener("click", () => {
     if (state.currentTest?.monitorId) startMonitorTestRun(state.currentTest.monitorId, state.currentTest.returnView);
+    else if (state.currentTest?.discoveryProposal) startDiscoveryTestRun(state.currentTest.discoveryProposal);
   });
   $("#testEditBtn").addEventListener("click", () => {
     const monitor = state.monitors.find((item) => item.id === state.currentTest?.monitorId);
@@ -1319,6 +1320,7 @@ function renderDiscoveryResults() {
       <label>Typ<select data-discovery-field="type">${discoveryTypeOptions(proposal.type)}</select></label>
       <label>Target<input data-discovery-field="target" value="${escapeHtml(proposal.target)}" maxlength="2048" /></label>
       <label>Grupa<select data-discovery-field="group_id">${discoveryGroupOptions(proposal.group_id)}</select></label>
+      <button class="discovery-test-btn" data-discovery-test="${index}" type="button">Testuj</button>
       <small>${escapeHtml(proposal.reason || "")} · pewność ${Math.round(Number(proposal.confidence || 0) * 100)}%</small>
     </article>
   `).join("");
@@ -1326,7 +1328,69 @@ function renderDiscoveryResults() {
     input.addEventListener("input", updateDiscoveryProposalFromInput);
     input.addEventListener("change", updateDiscoveryProposalFromInput);
   });
+  $$("[data-discovery-test]", root).forEach((button) => {
+    button.addEventListener("click", () => startDiscoveryTestRun(state.discoveryProposals[Number(button.dataset.discoveryTest)]));
+  });
   updateDiscoveryImportButton();
+}
+
+async function startDiscoveryTestRun(proposal) {
+  if (!proposal) return;
+  const monitor = {
+    type: proposal.type,
+    name: proposal.name,
+    target: proposal.target,
+    interval_seconds: proposal.interval_seconds || 60,
+    group_id: proposal.group_id || null,
+    enabled: true,
+    config: proposal.config || {},
+  };
+  state.currentTest = {
+    monitorId: null,
+    monitor,
+    discoveryProposal: proposal,
+    returnView: "discovery",
+    returnTab: "monitoring",
+    status: "running",
+    startedAt: new Date().toISOString(),
+    finishedAt: null,
+    result: null,
+    error: null,
+  };
+  $("#discoveryDialog")?.close();
+  showView("monitorTestRun", "monitoring");
+  renderMonitorTestRun();
+  startTestRunTimer();
+  try {
+    const response = await api("/api/monitors/test", {
+      method: "POST",
+      body: JSON.stringify({ ...monitor, test_on_save: false }),
+    });
+    state.currentTest = {
+      ...state.currentTest,
+      status: "done",
+      finishedAt: new Date().toISOString(),
+      result: {
+        ...monitor,
+        ...response,
+        last_response_ms: response.response_ms,
+        last_http_status: response.http_status,
+        last_content_hash: response.content_hash,
+        last_error: response.error,
+      },
+    };
+    toast("Test wykrytego hosta zakończony.");
+  } catch (error) {
+    state.currentTest = {
+      ...state.currentTest,
+      status: "error",
+      finishedAt: new Date().toISOString(),
+      error: error.message,
+    };
+  } finally {
+    stopTestRunTimer();
+    renderMonitorTestRun();
+  }
 }
 
 function discoveryProposalMatches(proposal, query) {
@@ -2074,6 +2138,11 @@ function backFromMonitorTest() {
     showMonitorDetails(test.monitorId);
     return;
   }
+  if (test.returnView === "discovery") {
+    showView("monitoring");
+    $("#discoveryDialog")?.showModal();
+    return;
+  }
   showView(test.returnView || test.returnTab || "monitoring");
 }
 
@@ -2095,7 +2164,7 @@ function stopTestRunTimer() {
 function renderMonitorTestRun() {
   const test = state.currentTest;
   if (!test) return;
-  const monitor = state.monitors.find((item) => item.id === test.monitorId) || test.result;
+  const monitor = state.monitors.find((item) => item.id === test.monitorId) || test.monitor || test.result;
   if (!monitor) return;
   const isRunning = test.status === "running";
   const elapsedUntil = test.finishedAt || new Date().toISOString();
@@ -2111,6 +2180,7 @@ function renderMonitorTestRun() {
   $("#testRunFinished").textContent = test.finishedAt ? formatDate(test.finishedAt) : "-";
   $("#testRepeatBtn").disabled = isRunning;
   $("#testEditBtn").disabled = isRunning;
+  $("#testEditBtn").hidden = !test.monitorId;
   $("#testRunMetrics").innerHTML = [
     ["Status", `<span class="badge ${badgeClass(result.status)}">${escapeHtml(result.status || "unknown")}</span>`],
     ["Odpowiedź", result.last_response_ms ? `${Number(result.last_response_ms).toFixed(1)} ms` : "-"],
@@ -2182,8 +2252,31 @@ function renderTestResultSummary(test, result) {
     "HTTP": result.last_http_status || "-",
     "Suma WWW": result.last_content_hash || "-",
     "Błąd": result.last_error || "-",
+    "Protokół": result.details?.protocol || "-",
+    "Banner usługi": result.details?.banner || "-",
   };
-  return `<dl class="diagnostics">${definitionRows(rows)}</dl>`;
+  return `<dl class="diagnostics">${definitionRows(rows)}</dl>${renderDiscoveryHttpPreview(test, result)}`;
+}
+
+function renderDiscoveryHttpPreview(test, result) {
+  if (!test.discoveryProposal || !["http_status", "http_hash"].includes(result.type)) return "";
+  let url;
+  try {
+    url = new URL(result.target);
+  } catch (_) {
+    return "";
+  }
+  if (!["http:", "https:"].includes(url.protocol)) return "";
+  const safeUrl = escapeHtml(url.href);
+  return `
+    <section class="discovery-http-preview">
+      <div class="panel-head">
+        <strong>Podgląd strony</strong>
+        <a href="${safeUrl}" target="_blank" rel="noopener noreferrer">Otwórz w nowej karcie</a>
+      </div>
+      <iframe src="${safeUrl}" title="Podgląd ${escapeHtml(result.name)}" sandbox="" referrerpolicy="no-referrer" loading="lazy"></iframe>
+      <small>Podgląd jest izolowany: skrypty, formularze i nawigacja strony są zablokowane.</small>
+    </section>`;
 }
 
 function definitionRows(rows) {

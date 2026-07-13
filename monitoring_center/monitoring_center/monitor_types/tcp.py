@@ -33,13 +33,27 @@ class TcpPortMonitor:
         started = time.perf_counter()
         try:
             reader, writer = await asyncio.wait_for(asyncio.open_connection(host, port), timeout=timeout)
+            banner = ""
+            if port == 22:
+                try:
+                    raw_banner = await asyncio.wait_for(reader.readline(), timeout=min(timeout, 1.5))
+                    banner = raw_banner[:256].decode("utf-8", errors="replace").strip()
+                except TimeoutError:
+                    pass
             writer.close()
             await writer.wait_closed()
             elapsed_ms = (time.perf_counter() - started) * 1000
+            protocol = "ssh" if banner.startswith("SSH-") else "tcp"
             return CheckResult(
                 "open",
                 response_ms=elapsed_ms,
-                details={"host": host, "port": port, "timeout_seconds": timeout},
+                details={
+                    "host": host,
+                    "port": port,
+                    "timeout_seconds": timeout,
+                    "protocol": protocol,
+                    "banner": banner or None,
+                },
                 events=["tcp_port_open"],
             )
         except TimeoutError:

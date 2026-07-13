@@ -179,6 +179,50 @@ def test_network_identity_classifies_popular_devices() -> None:
     assert discovery._vendor_hint("00:11:32:AA:BB:CC") == ("Synology", "nas")
 
 
+def test_port_22_is_proposed_as_live_ssh_probe() -> None:
+    proposal = discovery._port_proposal("192.168.1.10", 22, "nas.local")
+    assert proposal.name == "SSH nas.local"
+    assert proposal.type == "tcp_port"
+    assert proposal.config == {"host": "192.168.1.10", "port": 22}
+    assert "banner" in proposal.reason
+
+
+def test_tcp_monitor_reads_ssh_banner(
+    db: Database, app_config: AppConfig, ha_client: object, monkeypatch
+) -> None:
+    async def run() -> None:
+        reader = asyncio.StreamReader()
+        reader.feed_data(b"SSH-2.0-OpenSSH_test\r\n")
+        reader.feed_eof()
+
+        class Writer:
+            def close(self) -> None:
+                pass
+
+            async def wait_closed(self) -> None:
+                pass
+
+        async def fake_open_connection(host: str, port: int):
+            assert (host, port) == ("127.0.0.1", 22)
+            return reader, Writer()
+
+        monkeypatch.setattr(asyncio, "open_connection", fake_open_connection)
+        service = MonitorService(db, app_config, ha_client)  # type: ignore[arg-type]
+        result = await service.test_monitor(
+            {
+                "type": "tcp_port",
+                "name": "SSH test",
+                "target": "127.0.0.1:22",
+                "interval_seconds": 60,
+                "config": {"host": "127.0.0.1", "port": 22},
+            }
+        )
+        assert result["details"]["protocol"] == "ssh"
+        assert result["details"]["banner"].startswith("SSH-2.0-")
+
+    asyncio.run(run())
+
+
 def test_discovery_reports_source_errors_without_losing_other_results(
     db: Database,
     app_config: AppConfig,

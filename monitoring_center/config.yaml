@@ -1,5 +1,5 @@
 name: Monitoring Center
-version: "0.13.4"
+version: "0.13.5"
 slug: monitoring_center
 description: Local network and website monitoring center for Home Assistant
 url: https://github.com/chmajster/Home-Assistant-Addon-Infrastructure-Monitoring

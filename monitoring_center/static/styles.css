@@ -1930,6 +1930,29 @@ pre {
   min-height: 40px;
 }
 
+.discovery-test-btn {
+  grid-column: 1 / -1;
+  justify-self: end;
+}
+
+.discovery-http-preview {
+  display: grid;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.discovery-http-preview iframe {
+  width: 100%;
+  min-height: 420px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: #fff;
+}
+
+.discovery-http-preview small {
+  color: var(--text-muted);
+}
+
 .topology-panel {
   padding: 0;
   overflow: hidden;
