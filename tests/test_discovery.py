@@ -141,8 +141,16 @@ async def _test_network_discovery_respects_max_hosts(
     async def fake_port_open(host: str, port: int, timeout: float) -> bool:
         return False
 
+    async def fake_hostname(host: str, timeout: float) -> str | None:
+        return f"host-{host.rsplit('.', 1)[-1]}.local"
+
+    async def fake_mac(host: str, timeout: float) -> str | None:
+        return "B8:27:EB:00:00:01"
+
     monkeypatch.setattr(discovery, "_ping_host", fake_ping)
     monkeypatch.setattr(discovery, "_port_open", fake_port_open)
+    monkeypatch.setattr(discovery, "_reverse_hostname", fake_hostname)
+    monkeypatch.setattr(discovery, "_neighbor_mac", fake_mac)
     service = MonitorService(db, app_config, ha_client)  # type: ignore[arg-type]
 
     result = await service.scan_discovery(
@@ -157,6 +165,18 @@ async def _test_network_discovery_respects_max_hosts(
 
     assert scanned_hosts == ["192.168.50.1", "192.168.50.2", "192.168.50.3"]
     assert len([proposal for proposal in proposals if proposal["type"] == "ping_host"]) == 3
+    assert proposals[0]["hostname"] == "host-1.local"
+    assert proposals[0]["vendor"] == "Raspberry Pi"
+    assert proposals[0]["device_kind"] == "server"
+    assert proposals[0]["icon"] == "🖥️"
+
+
+def test_network_identity_classifies_popular_devices() -> None:
+    assert discovery._infer_device_kind("diskstation.local", "Synology", "nas", [80]) == "nas"
+    assert discovery._infer_device_kind("front-camera.local", None, None, [80]) == "camera"
+    assert discovery._infer_device_kind(None, "Ubiquiti", "access_point", [443]) == "access_point"
+    assert discovery._infer_device_kind(None, None, None, [8123]) == "server"
+    assert discovery._vendor_hint("00:11:32:AA:BB:CC") == ("Synology", "nas")
 
 
 def test_discovery_reports_source_errors_without_losing_other_results(

@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Monitoring Center</title>
-    <link rel="stylesheet" href="static/styles.css?v=0.13.2" />
+    <link rel="stylesheet" href="static/styles.css?v=0.13.4" />
   </head>
   <body>
     <svg class="icon-sprite" aria-hidden="true" focusable="false">
@@ -719,6 +719,10 @@
             <span id="discoverySummary" class="badge unknown">Brak skanu</span>
           </div>
           <div id="discoverySourceResults" class="discovery-source-results" aria-live="polite"></div>
+          <div class="discovery-search">
+            <label for="discoverySearch">Szukaj w wynikach</label>
+            <input id="discoverySearch" type="search" placeholder="Nazwa, typ, target, opis…" autocomplete="off" />
+          </div>
           <div id="discoveryResults" class="list empty" aria-live="polite">Uruchom skanowanie, aby zobaczyć propozycje.</div>
         </section>
         <menu class="dialog-footer">
@@ -902,6 +906,6 @@
     </dialog>
 
     <div id="toast" role="status" aria-label="Komunikat aplikacji" title="Kliknij, aby zamknąć"></div>
-    <script type="module" src="static/app.js?v=0.13.2"></script>
+    <script type="module" src="static/app.js?v=0.13.4"></script>
   </body>
 </html>

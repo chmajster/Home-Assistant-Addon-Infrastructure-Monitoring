@@ -64,3 +64,27 @@ def test_discovery_import_is_disabled_without_selectable_proposals() -> None:
     assert "importButton.disabled" in button_update
     assert "!proposal.duplicate_of_monitor_id" in button_update
     assert "updateDiscoveryImportButton()" in input_update
+
+
+def test_discovery_results_can_be_searched_across_proposal_fields() -> None:
+    render = _function_source("renderDiscoveryResults()", "discoveryProposalMatches(proposal, query)")
+    matcher = _function_source("discoveryProposalMatches(proposal, query)", "renderDiscoverySourceResults(sources)")
+    assert 'id="discoverySearch" type="search"' in HTML
+    assert "filteredProposals" in render
+    assert "proposal.name" in matcher
+    assert "proposal.type" in matcher
+    assert "proposal.target" in matcher
+    assert "proposal.reason" in matcher
+    assert "proposal.hostname" in matcher
+    assert "proposal.mac_address" in matcher
+    assert "proposal.vendor" in matcher
+    assert "JSON.stringify(proposal.config" in matcher
+    assert ".discovery-search" in CSS
+
+
+def test_discovery_results_show_device_identity_and_icon() -> None:
+    render = _function_source("renderDiscoveryResults()", "discoveryProposalMatches(proposal, query)")
+    assert "discovery-device-icon" in render
+    assert "discoveryIdentityText(proposal)" in render
+    assert "discoveryDeviceKindLabel(proposal.device_kind)" in render
+    assert ".discovery-identity" in CSS

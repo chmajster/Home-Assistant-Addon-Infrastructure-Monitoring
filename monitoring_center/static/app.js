@@ -94,6 +94,10 @@ function bindForms() {
   $("#cancelMonitorBtn").addEventListener("click", () => $("#monitorDialog").close());
   $("#testMonitorBtn").addEventListener("click", testMonitorFromForm);
   $("#discoveryForm")?.addEventListener("submit", runDiscoveryScan);
+  $("#discoverySearch")?.addEventListener("input", (event) => {
+    state.discoveryQuery = event.currentTarget.value;
+    renderDiscoveryResults();
+  });
   $("#closeDiscoveryBtn")?.addEventListener("click", () => $("#discoveryDialog").close());
   $("#importDiscoveryBtn")?.addEventListener("click", importDiscoverySelection);
   $("#groupForm").addEventListener("submit", saveGroup);
@@ -1192,6 +1196,8 @@ function openDiscoveryDialog() {
   if (form?.elements.total_timeout_seconds) form.elements.total_timeout_seconds.value = "60";
   state.discoveryProposals = [];
   state.discoveryReport = null;
+  state.discoveryQuery = "";
+  if ($("#discoverySearch")) $("#discoverySearch").value = "";
   renderDiscoveryResults();
   $("#discoveryDialog")?.showModal();
 }
@@ -1245,6 +1251,9 @@ function renderDiscoveryResults() {
   const sourceRoot = $("#discoverySourceResults");
   if (!root || !summary || !sourceRoot) return;
   const proposals = state.discoveryProposals || [];
+  const filteredProposals = proposals
+    .map((proposal, index) => ({ proposal, index }))
+    .filter(({ proposal }) => discoveryProposalMatches(proposal, state.discoveryQuery));
   const report = state.discoveryReport;
   if (report?.scanning) {
     summary.className = "badge warning";
@@ -1268,7 +1277,9 @@ function renderDiscoveryResults() {
   summary.textContent = report?.error
     ? "Skan nieudany"
     : proposals.length
-      ? `${proposals.length} propozycji, ${duplicates} duplikatów`
+      ? state.discoveryQuery.trim()
+        ? `${filteredProposals.length} z ${proposals.length} propozycji`
+        : `${proposals.length} propozycji, ${duplicates} duplikatów`
       : failed
         ? "Brak wyników — wystąpiły błędy"
         : skipped
@@ -1284,9 +1295,22 @@ function renderDiscoveryResults() {
     updateDiscoveryImportButton();
     return;
   }
+  if (!filteredProposals.length) {
+    root.className = "list empty discovery-no-matches";
+    root.textContent = `Brak wyników pasujących do „${state.discoveryQuery.trim()}”.`;
+    updateDiscoveryImportButton();
+    return;
+  }
   root.className = "discovery-results";
-  root.innerHTML = proposals.map((proposal, index) => `
+  root.innerHTML = filteredProposals.map(({ proposal, index }) => `
     <article class="discovery-item ${proposal.duplicate_of_monitor_id ? "duplicate" : ""}" data-discovery-index="${index}">
+      ${proposal.icon ? `<div class="discovery-identity">
+        <span class="discovery-device-icon" aria-hidden="true">${escapeHtml(proposal.icon)}</span>
+        <div>
+          <strong>${escapeHtml(discoveryDeviceKindLabel(proposal.device_kind))}</strong>
+          <small>${escapeHtml(discoveryIdentityText(proposal))}</small>
+        </div>
+      </div>` : ""}
       <label class="check discovery-check">
         <input data-discovery-field="selected" type="checkbox" ${proposal.duplicate_of_monitor_id ? "" : "checked"} />
         ${proposal.duplicate_of_monitor_id ? `Duplikat #${proposal.duplicate_of_monitor_id}` : "Importuj"}
@@ -1303,6 +1327,51 @@ function renderDiscoveryResults() {
     input.addEventListener("change", updateDiscoveryProposalFromInput);
   });
   updateDiscoveryImportButton();
+}
+
+function discoveryProposalMatches(proposal, query) {
+  const normalizedQuery = String(query || "").trim().toLocaleLowerCase("pl");
+  if (!normalizedQuery) return true;
+  const typeLabel = state.monitorTypes.find((type) => type.type === proposal.type)?.label || "";
+  const searchable = [
+    proposal.name,
+    proposal.type,
+    typeLabel,
+    proposal.target,
+    proposal.reason,
+    proposal.hostname,
+    proposal.mac_address,
+    proposal.vendor,
+    proposal.device_kind,
+    proposal.duplicate_of_monitor_id ? `duplikat ${proposal.duplicate_of_monitor_id}` : "",
+    JSON.stringify(proposal.config || {}),
+  ].join(" ").toLocaleLowerCase("pl");
+  return searchable.includes(normalizedQuery);
+}
+
+function discoveryIdentityText(proposal) {
+  return [
+    proposal.hostname ? `Hostname: ${proposal.hostname}` : "",
+    proposal.mac_address ? `MAC: ${proposal.mac_address}` : "",
+    proposal.vendor ? `Producent: ${proposal.vendor}` : "",
+  ].filter(Boolean).join(" · ") || "Brak dodatkowych danych identyfikacyjnych";
+}
+
+function discoveryDeviceKindLabel(kind) {
+  return {
+    router: "Router",
+    access_point: "Punkt dostępowy",
+    nas: "NAS",
+    server: "Serwer",
+    camera: "Kamera",
+    printer: "Drukarka",
+    television: "Telewizor / media",
+    speaker: "Głośnik",
+    phone: "Telefon",
+    iot: "Urządzenie IoT",
+    computer: "Komputer",
+    unknown: "Host sieciowy",
+  }[kind] || "Host sieciowy";
 }
 
 function renderDiscoverySourceResults(sources) {

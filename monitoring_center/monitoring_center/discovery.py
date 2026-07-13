@@ -4,6 +4,7 @@ import asyncio
 import ipaddress
 import platform
 import re
+import socket
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -15,6 +16,36 @@ from .monitor_types.ssh_common import run_ssh_command
 DISCOVERY_ENTITY_DOMAINS = {"binary_sensor", "sensor", "device_tracker", "switch", "light", "update"}
 NETWORK_PORTS = [22, 53, 80, 443, 8123, 1883, 8080, 8443]
 NETWORK_CONCURRENCY = 32
+DEVICE_ICONS = {
+    "router": "📡",
+    "access_point": "📶",
+    "nas": "💾",
+    "server": "🖥️",
+    "camera": "📷",
+    "printer": "🖨️",
+    "television": "📺",
+    "speaker": "🔊",
+    "phone": "📱",
+    "iot": "💡",
+    "computer": "💻",
+    "unknown": "🌐",
+}
+OUI_HINTS = {
+    "00:08:9B": ("QNAP", "nas"),
+    "00:11:32": ("Synology", "nas"),
+    "24:5E:BE": ("QNAP", "nas"),
+    "24:A4:3C": ("Ubiquiti", "access_point"),
+    "74:83:C2": ("Ubiquiti", "access_point"),
+    "F0:9F:C2": ("Ubiquiti", "access_point"),
+    "4C:5E:0C": ("MikroTik", "router"),
+    "DC:2C:6E": ("MikroTik", "router"),
+    "50:C7:BF": ("TP-Link", "router"),
+    "EC:08:6B": ("TP-Link", "router"),
+    "B8:27:EB": ("Raspberry Pi", "server"),
+    "DC:A6:32": ("Raspberry Pi", "server"),
+    "E4:5F:01": ("Raspberry Pi", "server"),
+    "2C:CF:67": ("Raspberry Pi", "server"),
+}
 SOURCE_LABELS = {
     "home_assistant": "Home Assistant",
     "network": "Sieć lokalna",
@@ -32,6 +63,11 @@ class DiscoveryProposal:
     confidence: float = 0.5
     reason: str = ""
     duplicate_of_monitor_id: int | None = None
+    hostname: str | None = None
+    mac_address: str | None = None
+    vendor: str | None = None
+    device_kind: str | None = None
+    icon: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -42,6 +78,11 @@ class DiscoveryProposal:
             "confidence": round(max(0.0, min(float(self.confidence), 1.0)), 2),
             "reason": self.reason,
             "duplicate_of_monitor_id": self.duplicate_of_monitor_id,
+            "hostname": self.hostname,
+            "mac_address": self.mac_address,
+            "vendor": self.vendor,
+            "device_kind": self.device_kind,
+            "icon": self.icon,
         }
 
 
@@ -237,20 +278,33 @@ class DiscoveryService:
             ping_ok = await _ping_host(host, timeout)
             open_ports = await asyncio.gather(*(_port_open(host, port, timeout) for port in NETWORK_PORTS))
         ports = [port for port, is_open in zip(NETWORK_PORTS, open_ports, strict=False) if is_open]
+        hostname, mac_address = await asyncio.gather(_reverse_hostname(host, timeout), _neighbor_mac(host, timeout))
+        vendor, vendor_kind = _vendor_hint(mac_address)
+        device_kind = _infer_device_kind(hostname, vendor, vendor_kind, ports)
+        icon = DEVICE_ICONS[device_kind]
+        display_name = hostname or host
+        identity_reason = _identity_reason(hostname, mac_address, vendor, device_kind)
         proposals: list[DiscoveryProposal] = []
         if ping_ok:
             proposals.append(
                 DiscoveryProposal(
-                    name=f"Ping {host}",
+                    name=f"Ping {display_name}",
                     type="ping_host",
                     target=host,
                     config={},
-                    confidence=0.7,
-                    reason="Host odpowiedzial na ping sweep w podanym zakresie.",
+                    confidence=0.8 if hostname or mac_address else 0.7,
+                    reason=f"Host odpowiedział na ping sweep. {identity_reason}",
+                    hostname=hostname,
+                    mac_address=mac_address,
+                    vendor=vendor,
+                    device_kind=device_kind,
+                    icon=icon,
                 )
             )
         for port in ports:
-            proposals.append(_port_proposal(host, port))
+            proposals.append(
+                _port_proposal(host, port, display_name, hostname, mac_address, vendor, device_kind, icon)
+            )
         return proposals
 
     async def _scan_docker(
@@ -435,44 +489,149 @@ async def _port_open(host: str, port: int, timeout: float) -> bool:
         return False
 
 
-def _port_proposal(host: str, port: int) -> DiscoveryProposal:
+def _port_proposal(
+    host: str,
+    port: int,
+    display_name: str | None = None,
+    hostname: str | None = None,
+    mac_address: str | None = None,
+    vendor: str | None = None,
+    device_kind: str = "unknown",
+    icon: str = DEVICE_ICONS["unknown"],
+) -> DiscoveryProposal:
+    label = display_name or host
+    identity = {
+        "hostname": hostname,
+        "mac_address": mac_address,
+        "vendor": vendor,
+        "device_kind": device_kind,
+        "icon": icon,
+    }
     if port in {80, 443, 8080, 8443, 8123}:
         scheme = "https" if port in {443, 8443} else "http"
         target = f"{scheme}://{host}" if port in {80, 443} else f"{scheme}://{host}:{port}"
         return DiscoveryProposal(
-            name=f"HTTP {host}:{port}",
+            name=f"HTTP {label}:{port}",
             type="http_status",
             target=target,
             config={"expected_status_codes": [200, 204, 301, 302, 401, 403]},
             confidence=0.75,
             reason=f"Port {port} jest otwarty i wyglada jak usluga HTTP.",
+            **identity,
         )
     if port == 53:
         return DiscoveryProposal(
-            name=f"DNS {host}",
+            name=f"DNS {label}",
             type="dns_lookup",
             target=host,
             config={"record_type": "A"},
             confidence=0.65,
             reason="Port DNS 53 jest otwarty.",
+            **identity,
         )
     if port == 1883:
         return DiscoveryProposal(
-            name=f"MQTT {host}",
+            name=f"MQTT {label}",
             type="mqtt_monitor",
             target=f"{host}:1883",
             config={"host": host, "port": 1883},
             confidence=0.75,
             reason="Port MQTT 1883 jest otwarty.",
+            **identity,
         )
     return DiscoveryProposal(
-        name=f"TCP {host}:{port}",
+        name=f"TCP {label}:{port}",
         type="tcp_port",
         target=f"{host}:{port}",
         config={"host": host, "port": port},
         confidence=0.7,
         reason=f"Port TCP {port} jest otwarty.",
+        **identity,
     )
+
+
+async def _reverse_hostname(host: str, timeout: float) -> str | None:
+    try:
+        result = await asyncio.wait_for(asyncio.to_thread(socket.gethostbyaddr, host), timeout=max(0.2, timeout))
+        hostname = str(result[0]).strip().rstrip(".")
+        return hostname if hostname and hostname != host else None
+    except (OSError, TimeoutError):
+        return None
+
+
+async def _neighbor_mac(host: str, timeout: float) -> str | None:
+    commands = (["ip", "neigh", "show", host], ["arp", "-n", host])
+    for command in commands:
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *command,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            stdout, _ = await asyncio.wait_for(process.communicate(), timeout=max(0.2, timeout))
+        except (FileNotFoundError, OSError, TimeoutError):
+            continue
+        match = re.search(rb"\b([0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5})\b", stdout)
+        if match:
+            return match.group(1).decode("ascii").upper()
+    return None
+
+
+def _vendor_hint(mac_address: str | None) -> tuple[str | None, str | None]:
+    if not mac_address:
+        return None, None
+    return OUI_HINTS.get(mac_address.upper()[:8], (None, None))
+
+
+def _infer_device_kind(
+    hostname: str | None,
+    vendor: str | None,
+    vendor_kind: str | None,
+    ports: list[int],
+) -> str:
+    text = f"{hostname or ''} {vendor or ''}".lower()
+    rules = (
+        ("router", ("router", "gateway", "mikrotik", "fritz")),
+        ("access_point", ("unifi", "access-point", "accesspoint", "wifi", "wlan", " ap")),
+        ("nas", ("nas", "synology", "qnap")),
+        ("camera", ("camera", "cam-", "ipc", "hikvision", "reolink")),
+        ("printer", ("printer", "drukarka", "laserjet", "officejet")),
+        ("television", ("tv", "bravia", "webos", "chromecast")),
+        ("speaker", ("sonos", "speaker", "audio", "homepod")),
+        ("phone", ("iphone", "android", "phone", "telefon")),
+        ("iot", ("shelly", "tuya", "tasmota", "esphome", "zigbee", "sensor", "light")),
+        ("server", ("server", "docker", "homeassistant", "home-assistant", "pihole", "raspberry")),
+        ("computer", ("desktop", "laptop", "macbook", "notebook", "workstation")),
+    )
+    for kind, tokens in rules:
+        if any(token in text for token in tokens):
+            return kind
+    if vendor_kind:
+        return vendor_kind
+    if 8123 in ports or 22 in ports:
+        return "server"
+    if 1883 in ports:
+        return "iot"
+    if 53 in ports:
+        return "router"
+    return "unknown"
+
+
+def _identity_reason(
+    hostname: str | None,
+    mac_address: str | None,
+    vendor: str | None,
+    device_kind: str,
+) -> str:
+    details = []
+    if hostname:
+        details.append(f"hostname: {hostname}")
+    if mac_address:
+        details.append(f"MAC: {mac_address}")
+    if vendor:
+        details.append(f"producent: {vendor}")
+    details.append(f"rozpoznany typ: {device_kind}")
+    return "Identyfikacja lokalna: " + ", ".join(details) + "."
 
 
 def _find_existing_duplicate(

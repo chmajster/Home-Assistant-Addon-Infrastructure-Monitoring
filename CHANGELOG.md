@@ -6,6 +6,15 @@ Format opiera się na konwencji Keep a Changelog, a wersjonowanie dodatku powinn
 
 ## [Unreleased]
 
+## [0.13.4] - 2026-07-13
+
+- Dodano lokalne rozpoznawanie hostów discovery przez reverse DNS, MAC, popularne prefiksy producentów i otwarte porty.
+- Dodano klasyfikację oraz ikony routerów, punktów dostępowych, NAS-ów, serwerów, kamer, drukarek, urządzeń multimedialnych, telefonów, komputerów i IoT.
+
+## [0.13.3] - 2026-07-13
+
+- Dodano wyszukiwarkę propozycji w wyniku discovery po nazwie, typie, celu, opisie i konfiguracji.
+
 ## [0.13.2] - 2026-07-13
 
 - Przywrócono wykrywanie tokenu Supervisor w różnych układach środowiska obrazów bazowych Home Assistant.

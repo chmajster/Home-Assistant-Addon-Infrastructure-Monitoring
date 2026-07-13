@@ -9,5 +9,5 @@ export const state = {
   eventTypeFilter: "", eventQuery: "", incidentStatusFilter: "all", incidentMonitorFilter: "",
   lastRefreshedAt: null, detailHistoryRows: [], detailHistoryPage: 1, detailHistoryPageSize: 100,
   detailHistoryFilters: { from: "", to: "", status: "all", search: "", sort: "date_desc" },
-  discoveryProposals: [], discoveryReport: null,
+  discoveryProposals: [], discoveryReport: null, discoveryQuery: "",
 };
